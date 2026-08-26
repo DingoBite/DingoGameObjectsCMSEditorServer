@@ -1,0 +1,1541 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DingoCMS Editor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #13170f;
+      --panel: #1b2218;
+      --panel-2: #242d20;
+      --line: #45553a;
+      --text: #eee9d6;
+      --muted: #aab39a;
+      --cyan: #8bc9cf;
+      --amber: #dfb85a;
+      --red: #ef7c70;
+      --folder: #f2c25c;
+      --folder-dark: #d9a437;
+      --file: #cfd8c4;
+      --file-dark: #93a086;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-height: 58px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #10130d;
+    }
+    h1 { margin: 0; font-size: 17px; letter-spacing: .04em; }
+    #runtime { color: var(--muted); }
+    #connection { margin-left: auto; color: var(--muted); }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(270px, 24vw) 1fr;
+      height: calc(100vh - 58px);
+    }
+    aside, main { min-width: 0; overflow: hidden; }
+    aside {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    input, select, textarea, button {
+      color: var(--text);
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      font: inherit;
+    }
+    input, select { min-height: 30px; padding: 4px 8px; }
+    .toolbar input, .toolbar select { min-height: 34px; }
+    input[type=search] { flex: 1 1 150px; }
+    button { min-height: 30px; padding: 5px 10px; cursor: pointer; }
+    .toolbar button, .identity button { min-height: 34px; padding: 6px 11px; }
+    button:hover:not(:disabled) { border-color: var(--cyan); }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 1px;
+    }
+    button.primary { color: #071012; background: var(--cyan); border-color: var(--cyan); }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    #assets {
+      flex: 1;
+      overflow: auto;
+      margin: 0;
+      padding: 6px;
+      list-style: none;
+    }
+    #assets button {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 2px 0;
+      padding: 8px;
+      overflow: hidden;
+      text-align: left;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      background: transparent;
+      border-color: transparent;
+    }
+    #assets button:hover, #assets button.selected { background: var(--panel-2); border-color: var(--line); }
+    main { display: grid; grid-template-rows: auto auto 1fr auto auto; }
+    .identity, .browser-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+    }
+    .identity { min-height: 52px; gap: 10px; }
+    .browser-bar { background: var(--panel); }
+    #asset-title { color: var(--text); font-weight: 700; }
+    #asset-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #dirty { color: var(--amber); }
+    .spacer { flex: 1 1 20px; }
+    #crumbs {
+      display: flex;
+      flex: 1 1 200px;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 2px;
+      min-width: 0;
+      padding: 2px 6px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel-2);
+    }
+    #crumbs button {
+      min-height: 24px;
+      padding: 1px 6px;
+      color: var(--cyan);
+      background: transparent;
+      border-color: transparent;
+    }
+    #crumbs button:last-child { color: var(--text); }
+    #crumbs .sep { color: var(--muted); }
+
+    #browser { overflow: auto; }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+      gap: 2px;
+      padding: 14px 12px;
+    }
+    .tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 10px 4px 8px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      cursor: default;
+      user-select: none;
+    }
+    .tile:hover { background: #1f2a1b; border-color: #33422b; }
+    .tile.selected { background: #2c3826; border-color: var(--cyan); }
+    .tile svg { width: 52px; height: 44px; flex: none; }
+    .tile .label {
+      display: -webkit-box;
+      width: 100%;
+      /* Two lines are always reserved so captions stay on one baseline across
+         the row, however long a property name is. */
+      min-height: 2.5em;
+      overflow: hidden;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-height: 1.25;
+      text-align: center;
+      word-break: break-word;
+    }
+    .tile .caption {
+      width: 100%;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 11px;
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tile .rename {
+      width: 100%;
+      min-height: 24px;
+      padding: 1px 4px;
+      text-align: center;
+    }
+    #grid.component-grid {
+      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      gap: 10px;
+    }
+    .tile.component-card {
+      align-items: stretch;
+      min-height: 132px;
+      padding: 12px;
+      border-color: var(--line);
+      background: linear-gradient(145deg, #20291c, #182016);
+    }
+    .tile.component-card .label {
+      min-height: 0;
+      color: var(--cyan);
+      font-weight: 700;
+      text-align: left;
+    }
+    .tile.component-card .caption { text-align: left; }
+    .component-fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      min-height: 25px;
+      margin-top: 2px;
+    }
+    .field-chip {
+      max-width: 100%;
+      padding: 3px 6px;
+      overflow: hidden;
+      color: var(--muted);
+      background: #11170f;
+      border: 1px solid #33422b;
+      border-radius: 999px;
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .component-warning {
+      margin-top: auto;
+      padding: 6px 7px;
+      color: var(--red);
+      background: #351c19;
+      border: 1px solid #6a352f;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    .empty { padding: 18px 14px; color: var(--muted); }
+
+    .details {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+    }
+    #details-name { color: var(--text); font-weight: 700; }
+    #details-value { flex: 1 1 240px; }
+    #details-type { flex: 0 0 auto; }
+    #details-value.invalid { border-color: var(--red); color: var(--red); }
+
+    #editor {
+      width: 100%;
+      height: 100%;
+      padding: 14px;
+      resize: none;
+      border: 0;
+      border-radius: 0;
+      outline: 0;
+      background: #151b13;
+      tab-size: 2;
+    }
+    .status {
+      max-height: 22vh;
+      overflow: auto;
+      padding: 8px 12px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+    }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+    .ok { color: var(--cyan); }
+    .error { color: var(--red); }
+    @media (max-width: 780px) {
+      .layout { grid-template-columns: 1fr; height: auto; }
+      aside { min-height: 38vh; border-right: 0; border-bottom: 1px solid var(--line); }
+      main { min-height: 62vh; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>DingoCMS Editor</h1>
+  <span id="runtime">disk/runtime: unknown</span>
+  <span id="connection" role="status">connecting...</span>
+</header>
+<div class="layout">
+  <aside>
+    <div class="toolbar">
+      <select id="module" aria-label="Module"></select>
+      <input id="query" type="search" placeholder="asset key, type, component...">
+      <button id="refresh" title="Re-read the asset list">Refresh</button>
+      <button id="schema" title="List authored $type aliases">Types</button>
+    </div>
+    <ul id="assets"></ul>
+  </aside>
+  <main>
+    <div class="identity">
+      <span id="asset-title">Select an asset</span>
+      <span id="asset-path"></span>
+      <span id="dirty"></span>
+      <span class="spacer"></span>
+      <button id="undo" disabled title="Ctrl+Z">Undo</button>
+      <button id="redo" disabled title="Ctrl+Y">Redo</button>
+      <button id="reload" disabled title="Discard local edits and re-read from disk">Reload</button>
+      <button id="save" class="primary" disabled title="Ctrl+S">Save</button>
+    </div>
+    <div class="browser-bar">
+      <button id="up" disabled title="Backspace">Up</button>
+      <nav id="crumbs" aria-label="Document path"></nav>
+      <select id="new-kind" aria-label="New entry type" disabled>
+        <option value="object">object</option>
+        <option value="array">array</option>
+        <option value="string">string</option>
+        <option value="number">number</option>
+        <option value="boolean">boolean</option>
+        <option value="null">null</option>
+      </select>
+      <button id="new" disabled title="Insert">New</button>
+      <button id="rename" disabled title="F2">Rename</button>
+      <button id="duplicate" disabled>Duplicate</button>
+      <button id="delete" disabled title="Delete">Delete</button>
+      <button id="mode" disabled title="Switch between the folder browser and raw JSON">JSON</button>
+    </div>
+    <div id="browser">
+      <div id="grid"></div>
+      <div id="empty" class="empty" hidden>This folder is empty.</div>
+    </div>
+    <textarea id="editor" spellcheck="false" aria-label="Asset JSON" hidden></textarea>
+    <div id="details" class="details" hidden>
+      <span id="details-name"></span>
+      <select id="details-type" aria-label="Value type"></select>
+      <span id="details-slot"></span>
+    </div>
+    <div class="status"><pre id="diagnostics" aria-live="polite">Ready.</pre></div>
+  </main>
+</div>
+<script>
+  const HISTORY_LIMIT = 300;
+  const HISTORY_COALESCE_MS = 350;
+  const VALUE_KINDS = ['string', 'number', 'boolean', 'null', 'object', 'array'];
+  const state = {
+    modules: [],
+    moduleId: '',
+    asset: null,
+    mode: 'folders',
+    // Authoritative in folder mode. Text mode keeps the textarea authoritative,
+    // because half-typed JSON cannot be parsed on every keystroke.
+    document: null,
+    pointer: '',
+    selected: null,
+    baseline: '',
+    busy: false
+  };
+  const history = { past: [], future: [], current: null, timer: 0 };
+  const $ = id => document.getElementById(id);
+  let searchRevision = 0;
+
+  async function call(operation, body = {}) {
+    const response = await fetch('/api/' + encodeURIComponent(operation), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const text = await response.text();
+    let value;
+    try { value = text ? JSON.parse(text) : {}; }
+    catch { throw new Error(text || response.statusText); }
+    if (!response.ok || value.ok === false) {
+      const detail = typeof value.error === 'object'
+        ? value.error?.message || JSON.stringify(value.error)
+        : value.error || value.message;
+      const error = new Error(detail || response.statusText);
+      error.code = typeof value.error === 'object' ? value.error?.code : undefined;
+      throw error;
+    }
+    return value.result ?? value;
+  }
+
+  function report(value, error = false) {
+    $('diagnostics').className = error ? 'error' : 'ok';
+    $('diagnostics').textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  }
+
+  function guard(promise) {
+    return Promise.resolve(promise).catch(error => report(error.message, true));
+  }
+
+  // ---- JSON pointers (RFC 6901) --------------------------------------------
+  // A pointer is the folder path, so '/' and '~' inside a property name have to
+  // survive the round trip - the fixtures really do contain keys like 'a/b'.
+
+  function encodeToken(token) {
+    return String(token).replace(/~/g, '~0').replace(/\//g, '~1');
+  }
+
+  function decodeToken(token) {
+    return token.replace(/~1/g, '/').replace(/~0/g, '~');
+  }
+
+  function pointerTokens(pointer) {
+    return pointer ? pointer.slice(1).split('/').map(decodeToken) : [];
+  }
+
+  function buildPointer(tokens) {
+    return tokens.map(token => '/' + encodeToken(token)).join('');
+  }
+
+  function childOf(node, token) {
+    if (token === null || token === undefined) return undefined;
+    if (Array.isArray(node)) return node[Number(token)];
+    if (node !== null && typeof node === 'object') return node[token];
+    return undefined;
+  }
+
+  function resolvePointer(pointer) {
+    let node = state.document;
+    for (const token of pointerTokens(pointer)) {
+      node = childOf(node, token);
+      if (node === undefined) return undefined;
+    }
+    return node;
+  }
+
+  // Deleting or undoing can strand the current folder. Walk as deep as the
+  // document still allows instead of dropping the user at the root.
+  function clampPointer(pointer) {
+    const kept = [];
+    let node = state.document;
+    for (const token of pointerTokens(pointer)) {
+      const next = childOf(node, token);
+      if (!isFolder(next)) break;
+      kept.push(token);
+      node = next;
+    }
+    return buildPointer(kept);
+  }
+
+  function isFolder(value) {
+    return value !== null && typeof value === 'object';
+  }
+
+  function kindOf(value) {
+    if (Array.isArray(value)) return 'array';
+    if (value === null) return 'null';
+    return typeof value;
+  }
+
+  function describe(value) {
+    if (Array.isArray(value)) {
+      return `${value.length} ${value.length === 1 ? 'item' : 'items'}`;
+    }
+    if (isFolder(value)) {
+      const fields = Object.keys(value).length;
+      const label = `${fields} ${fields === 1 ? 'field' : 'fields'}`;
+      return typeof value.$type === 'string' ? value.$type : label;
+    }
+    return value === null ? 'null' : String(value);
+  }
+
+  function defaultValue(kind) {
+    switch (kind) {
+      case 'object': return {};
+      case 'array': return [];
+      case 'string': return '';
+      case 'number': return 0;
+      case 'boolean': return false;
+      default: return null;
+    }
+  }
+
+  function clone(value) {
+    return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+  }
+
+  function stringify(value) {
+    return JSON.stringify(value, null, 2);
+  }
+
+  // ---- document text and dirty state ---------------------------------------
+
+  function currentText() {
+    if (!state.asset) return '';
+    return state.mode === 'text' ? $('editor').value : stringify(state.document);
+  }
+
+  function isDirty() {
+    return !!state.asset && currentText() !== state.baseline;
+  }
+
+  function parseDocument(text) {
+    const value = JSON.parse(text);
+    if (!isFolder(value) || Array.isArray(value)) {
+      throw new Error('An asset document must be a JSON object.');
+    }
+    return value;
+  }
+
+  // ---- history --------------------------------------------------------------
+  // One stack for both modes: a step is the whole document text, so a folder
+  // operation and a raw edit undo through the same gesture.
+
+  function snapshot() {
+    return {
+      text: currentText(),
+      start: $('editor').selectionStart,
+      end: $('editor').selectionEnd
+    };
+  }
+
+  function hasPendingEdit() {
+    return !!history.current && history.current.text !== currentText();
+  }
+
+  function resetHistory() {
+    clearTimeout(history.timer);
+    history.past.length = 0;
+    history.future.length = 0;
+    history.current = snapshot();
+  }
+
+  function commitHistory() {
+    clearTimeout(history.timer);
+    if (!history.current || !hasPendingEdit()) {
+      history.current = snapshot();
+      return;
+    }
+    history.past.push(history.current);
+    if (history.past.length > HISTORY_LIMIT) history.past.shift();
+    history.future.length = 0;
+    history.current = snapshot();
+  }
+
+  function scheduleHistoryCommit() {
+    clearTimeout(history.timer);
+    history.timer = setTimeout(commitHistory, HISTORY_COALESCE_MS);
+  }
+
+  // A step restores content only. Undo never moves the user: not between the
+  // browser and the raw JSON, and not out of the folder they are standing in.
+  function applyHistoryStep(step) {
+    if (state.mode === 'folders') {
+      try {
+        state.document = parseDocument(step.text);
+      } catch (error) {
+        // Text mode can commit a step that is mid-edit and unparseable.
+        state.mode = 'text';
+        $('editor').value = step.text;
+        renderMode();
+        report(`${error.message} Opened as raw JSON.`, true);
+        return;
+      }
+      state.pointer = clampPointer(state.pointer);
+      if (childOf(currentContainer(), state.selected) === undefined) state.selected = null;
+      renderMode();
+      return;
+    }
+    $('editor').value = step.text;
+    $('editor').setSelectionRange(step.start ?? 0, step.end ?? 0);
+    renderMode();
+    $('editor').focus();
+  }
+
+  function undo() {
+    commitHistory();
+    if (history.past.length === 0) return;
+    const previous = history.past.pop();
+    history.future.push(history.current);
+    history.current = previous;
+    applyHistoryStep(previous);
+  }
+
+  function redo() {
+    commitHistory();
+    if (history.future.length === 0) return;
+    const next = history.future.pop();
+    history.past.push(history.current);
+    history.current = next;
+    applyHistoryStep(next);
+  }
+
+  // ---- icons ----------------------------------------------------------------
+
+  function folderIcon() {
+    return svg(
+      ['M3 9a4 4 0 0 1 4-4h11l5 5h20a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z', 'var(--folder-dark)'],
+      ['M3 16h44v20a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z', 'var(--folder)']);
+  }
+
+  function fileIcon() {
+    return svg(
+      ['M12 2h17l9 9v29a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z', 'var(--file)'],
+      ['M29 2l9 9h-9z', 'var(--file-dark)']);
+  }
+
+  function svg(...shapes) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    node.setAttribute('viewBox', '0 0 50 44');
+    node.setAttribute('aria-hidden', 'true');
+    for (const [path, fill] of shapes) {
+      const element = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      element.setAttribute('d', path);
+      element.setAttribute('fill', fill);
+      node.appendChild(element);
+    }
+    return node;
+  }
+
+  // ---- rendering ------------------------------------------------------------
+
+  function renderMode() {
+    const folders = state.mode === 'folders';
+    $('browser').hidden = !folders;
+    $('editor').hidden = folders;
+    $('mode').textContent = folders ? 'JSON' : 'Folders';
+    if (folders) renderFolder();
+    else $('details').hidden = true;
+    refreshControls();
+  }
+
+  function folderEntries(node) {
+    if (Array.isArray(node)) {
+      // An array element has no name of its own, so an authored $type is a far
+      // better tile caption than the bare index.
+      return node.map((value, index) => {
+        const named = isFolder(value) && !Array.isArray(value)
+          && typeof value.$type === 'string' && value.$type;
+        const childSet = /\/Children$/.test(state.pointer)
+          && isFolder(value)
+          && Array.isArray(value.Components);
+        return {
+          token: String(index),
+          label: childSet ? `Child ${index + 1}` : named || `[${index}]`,
+          caption: childSet
+            ? `${value.Components.length} component(s) · ordinal ${index}`
+            : named ? `[${index}]` : describe(value),
+          value
+        };
+      });
+    }
+    if (isFolder(node)) {
+      let keys = Object.keys(node);
+      if (node.$type === 'GridColliderShape_GAC') {
+        const sphere = node.Kind === 1 || node.Kind === 'Sphere';
+        keys = keys.filter(key => sphere
+          ? key !== 'SizeInCells'
+          : key !== 'RadiusInCells');
+      }
+      return keys.map(key => ({
+        token: key,
+        label: key,
+        caption: describe(node[key]),
+        value: node[key]
+      }));
+    }
+    return [];
+  }
+
+  function entryFor(token) {
+    return folderEntries(currentContainer()).find(entry => entry.token === token);
+  }
+
+  function renderCrumbs() {
+    const crumbs = $('crumbs');
+    crumbs.innerHTML = '';
+    const rootLabel = state.asset
+      ? (state.asset.relativeJsonPath || '').split('/').pop() || 'root'
+      : 'root';
+    appendCrumb(crumbs, rootLabel, '');
+    let pointer = '';
+    for (const token of pointerTokens(state.pointer)) {
+      pointer += '/' + encodeToken(token);
+      const separator = document.createElement('span');
+      separator.className = 'sep';
+      separator.textContent = '›';
+      crumbs.appendChild(separator);
+      appendCrumb(crumbs, token, pointer);
+    }
+  }
+
+  function appendCrumb(crumbs, label, pointer) {
+    const button = document.createElement('button');
+    button.textContent = label;
+    button.onclick = () => navigateTo(pointer);
+    crumbs.appendChild(button);
+  }
+
+  function renderFolder() {
+    renderCrumbs();
+    const grid = $('grid');
+    grid.innerHTML = '';
+    const entries = folderEntries(currentContainer());
+    grid.classList.toggle(
+      'component-grid',
+      entries.some(entry => isComponentCard(entry)));
+    $('empty').hidden = entries.length > 0;
+    for (const entry of entries) grid.appendChild(buildTile(entry));
+    renderDetails();
+  }
+
+  function buildTile(entry) {
+    const tile = document.createElement('div');
+    tile.className = 'tile';
+    tile.dataset.token = entry.token;
+    if (state.selected === entry.token) tile.classList.add('selected');
+    const componentCard = isComponentCard(entry);
+    if (componentCard) tile.classList.add('component-card');
+    else tile.appendChild(isFolder(entry.value) ? folderIcon() : fileIcon());
+
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = entry.label;
+    tile.appendChild(label);
+
+    const caption = document.createElement('div');
+    caption.className = 'caption';
+    caption.textContent = entry.caption;
+    caption.title = entry.caption;
+    tile.appendChild(caption);
+
+    if (componentCard) {
+      const fields = document.createElement('div');
+      fields.className = 'component-fields';
+      for (const summary of componentSummaries(entry)) {
+        const chip = document.createElement('span');
+        chip.className = 'field-chip';
+        chip.textContent = summary;
+        chip.title = summary;
+        fields.appendChild(chip);
+      }
+      tile.appendChild(fields);
+      const warningText = componentWarning(entry);
+      if (warningText) {
+        const warning = document.createElement('div');
+        warning.className = 'component-warning';
+        warning.textContent = warningText;
+        tile.appendChild(warning);
+      }
+    }
+
+    tile.onclick = () => select(entry.token);
+    tile.ondblclick = () => open(entry.token);
+    return tile;
+  }
+
+  function isComponentCard(entry) {
+    if (!isFolder(entry.value) || Array.isArray(entry.value)) return false;
+    if (typeof entry.value.$type === 'string'
+        && entry.value.$type.endsWith('_GAC')) return true;
+    return /\/Children$/.test(state.pointer)
+      && Array.isArray(entry.value.Components);
+  }
+
+  function compactValue(value) {
+    if (value !== null && typeof value === 'object') {
+      if ('x' in value && 'y' in value) return `${value.x} × ${value.y}`;
+      return describe(value);
+    }
+    return String(value);
+  }
+
+  function componentSummaries(entry) {
+    const value = entry.value;
+    if (Array.isArray(value.Components)) {
+      return value.Components.flatMap(component => {
+        if (component?.$type !== 'GridColliderShape_GAC') {
+          return [component?.$type || 'invalid'];
+        }
+        const sphere = component.Kind === 1 || component.Kind === 'Sphere';
+        return sphere
+          ? ['Shape: Sphere',
+            `radius ${compactValue(component.RadiusInCells ?? 0.5)}`]
+          : ['Shape: Box',
+            `size ${compactValue(component.SizeInCells ?? { x: 1, y: 1 })}`];
+      });
+    }
+    if (value.$type === 'GridColliderShape_GAC') {
+      const kind = value.Kind === 1 || value.Kind === 'Sphere'
+        ? 'Sphere'
+        : 'Box';
+      const geometry = kind === 'Sphere'
+        ? `radius ${compactValue(value.RadiusInCells ?? 0.5)}`
+        : `size ${compactValue(value.SizeInCells ?? { x: 1, y: 1 })}`;
+      return [kind, geometry,
+        `offset ${compactValue(value.CenterOffsetInCells ?? { x: 0, y: 0 })}`];
+    }
+    return Object.entries(value)
+      .filter(([key, field]) => key !== '$type' && !isFolder(field))
+      .slice(0, 4)
+      .map(([key, field]) => `${key}: ${compactValue(field)}`);
+  }
+
+  function componentWarning(entry) {
+    const value = entry.value;
+    if (Array.isArray(value.Components)) {
+      return componentSetWarning(value.Components, 'Child set');
+    }
+    const siblings = Array.isArray(currentContainer())
+      ? currentContainer()
+      : [];
+    const types = new Set(siblings.map(component => component?.$type));
+    if ((value.$type === 'GridCollider_GAC'
+         || value.$type === 'GridColliderTrigger_GAC')
+        && types.has('GridCollider_GAC')
+        && types.has('GridColliderTrigger_GAC')) {
+      return 'Solid and trigger roles cannot share one entity.';
+    }
+    if ((value.$type === 'GridCollider_GAC'
+         || value.$type === 'GridColliderTrigger_GAC')
+        && !types.has('GridColliderShape_GAC')) {
+      return 'Collider role needs GridColliderShape.';
+    }
+    if (value.$type === 'GridColliderShape_GAC') {
+      return colliderShapeWarning(value);
+    }
+    return '';
+  }
+
+  function componentSetWarning(components, label) {
+    if (components.length === 0) return `${label} needs components.`;
+    if (components.some(component => !component
+        || typeof component.$type !== 'string')) {
+      return `${label} contains an invalid component.`;
+    }
+    if (components.some(component =>
+      component.$type === 'ChildComponents_GAC')) {
+      return 'Nested child factories are forbidden.';
+    }
+    const types = components.map(component => component.$type);
+    if (new Set(types).size !== types.length) {
+      return `${label} contains a duplicate component type.`;
+    }
+    const hasSolid = types.includes('GridCollider_GAC');
+    const hasTrigger = types.includes('GridColliderTrigger_GAC');
+    const shape = components.find(component =>
+      component.$type === 'GridColliderShape_GAC');
+    if (hasSolid && hasTrigger) {
+      return 'Solid and trigger roles cannot share one entity.';
+    }
+    if ((hasSolid || hasTrigger) && !shape) {
+      return 'Collider role needs GridColliderShape.';
+    }
+    return shape ? colliderShapeWarning(shape) : '';
+  }
+
+  function colliderShapeWarning(value) {
+    const box = value.Kind === 0 || value.Kind === 'Box'
+      || value.Kind === undefined;
+    const sphere = value.Kind === 1 || value.Kind === 'Sphere';
+    if (!box && !sphere) return 'Collider shape kind is unsupported.';
+    const offset = value.CenterOffsetInCells ?? { x: 0, y: 0 };
+    if (!Number.isFinite(Number(offset.x))
+        || !Number.isFinite(Number(offset.y))) {
+      return 'Collider offset must be finite.';
+    }
+    const radius = Number(value.RadiusInCells ?? 0.5);
+    const size = value.SizeInCells ?? { x: 1, y: 1 };
+    if (sphere && !(Number.isFinite(radius) && radius > 0)) {
+      return 'Sphere radius must be finite and positive.';
+    }
+    if (box && !(Number.isFinite(Number(size.x))
+        && Number(size.x) > 0
+        && Number.isFinite(Number(size.y))
+        && Number(size.y) > 0)) {
+      return 'Box size must be finite and positive.';
+    }
+    return '';
+  }
+
+  function tileFor(token) {
+    return [...$('grid').children].find(tile => tile.dataset.token === token);
+  }
+
+  function open(token) {
+    const value = childOf(currentContainer(), token);
+    if (isFolder(value)) {
+      navigateTo(state.pointer + '/' + encodeToken(token));
+      return;
+    }
+    select(token);
+    const editor = $('details').querySelector('#details-value');
+    if (editor && !editor.disabled) {
+      editor.focus();
+      if (editor.select) editor.select();
+    }
+  }
+
+  function select(token) {
+    state.selected = token;
+    for (const tile of $('grid').children) {
+      tile.classList.toggle('selected', tile.dataset.token === token);
+    }
+    renderDetails();
+    refreshControls();
+  }
+
+  // The details strip is where a leaf is actually edited: tiles stay tiles.
+  function renderDetails() {
+    const details = $('details');
+    const container = currentContainer();
+    const value = childOf(container, state.selected);
+    if (state.selected === null || value === undefined) {
+      details.hidden = true;
+      return;
+    }
+
+    details.hidden = false;
+    const label = Array.isArray(container) ? `[${state.selected}]` : state.selected;
+    $('details-name').textContent = label;
+
+    const type = $('details-type');
+    type.innerHTML = '';
+    for (const kind of VALUE_KINDS) {
+      const option = document.createElement('option');
+      option.value = kind;
+      option.textContent = kind;
+      type.appendChild(option);
+    }
+    type.value = kindOf(value);
+    type.onchange = () => {
+      writeChild(container, state.selected, defaultValue(type.value));
+      renderFolder();
+      commitHistory();
+      refreshControls();
+    };
+
+    const slot = $('details-slot');
+    slot.innerHTML = '';
+    slot.appendChild(isFolder(value)
+      ? buildFolderSummary(value)
+      : buildValueEditor(container, state.selected, value, label));
+  }
+
+  function buildFolderSummary(value) {
+    const summary = document.createElement('span');
+    summary.textContent = `${describe(value)} — double-click to open`;
+    return summary;
+  }
+
+  function buildValueEditor(container, token, value, label) {
+    if (container?.$type === 'GridColliderShape_GAC'
+        && token === 'Kind') {
+      const select = document.createElement('select');
+      select.id = 'details-value';
+      for (const [literal, caption] of [[0, 'Box'], [1, 'Sphere']]) {
+        const option = document.createElement('option');
+        option.value = String(literal);
+        option.textContent = caption;
+        select.appendChild(option);
+      }
+      select.value = String(
+        value === 'Sphere' ? 1 : value === 'Box' ? 0 : value);
+      select.onchange = () => {
+        writeChild(container, token, Number(select.value));
+        commitHistory();
+        renderFolder();
+        refreshControls();
+      };
+      return select;
+    }
+
+    if (typeof value === 'boolean') {
+      const select = document.createElement('select');
+      select.id = 'details-value';
+      for (const literal of ['true', 'false']) {
+        const option = document.createElement('option');
+        option.value = literal;
+        option.textContent = literal;
+        select.appendChild(option);
+      }
+      select.value = String(value);
+      select.onchange = () => {
+        writeChild(container, token, select.value === 'true');
+        updateCaption(token);
+        commitHistory();
+        refreshControls();
+      };
+      return select;
+    }
+
+    const input = document.createElement('input');
+    input.id = 'details-value';
+    input.type = 'text';
+    if (value === null) {
+      input.value = 'null';
+      input.disabled = true;
+      return input;
+    }
+
+    const numeric = typeof value === 'number';
+    input.value = String(value);
+    input.oninput = () => {
+      if (numeric) {
+        const parsed = Number(input.value);
+        if (input.value.trim() === '' || Number.isNaN(parsed)) {
+          input.classList.add('invalid');
+          return;
+        }
+        input.classList.remove('invalid');
+        writeChild(container, token, parsed);
+      } else {
+        writeChild(container, token, input.value);
+      }
+      updateCaption(token);
+      scheduleHistoryCommit();
+      refreshControls();
+    };
+    input.onchange = () => {
+      // Leaving a half-typed number behind would silently save the old value.
+      if (input.classList.contains('invalid')) {
+        input.classList.remove('invalid');
+        input.value = String(childOf(container, token));
+        report(`'${label}' is a number; the entered text was discarded.`, true);
+      }
+      commitHistory();
+      refreshControls();
+    };
+    return input;
+  }
+
+  function updateCaption(token) {
+    const tile = tileFor(token);
+    const entry = entryFor(token);
+    if (!tile || !entry) return;
+    const caption = tile.querySelector('.caption');
+    caption.textContent = entry.caption;
+    caption.title = entry.caption;
+  }
+
+  function writeChild(container, token, value) {
+    if (Array.isArray(container)) container[Number(token)] = value;
+    else container[token] = value;
+  }
+
+  function navigateTo(pointer) {
+    state.pointer = pointer;
+    state.selected = null;
+    renderFolder();
+    refreshControls();
+  }
+
+  function navigateUp() {
+    const tokens = pointerTokens(state.pointer);
+    if (tokens.length === 0) return;
+    const leaving = tokens.pop();
+    state.pointer = buildPointer(tokens);
+    renderFolder();
+    select(leaving);
+    tileFor(leaving)?.scrollIntoView({ block: 'nearest' });
+  }
+
+  // ---- entry operations -----------------------------------------------------
+
+  function currentContainer() {
+    return resolvePointer(state.pointer);
+  }
+
+  function uniqueName(container, base) {
+    if (!(base in container)) return base;
+    let index = 2;
+    while (`${base} ${index}` in container) index++;
+    return `${base} ${index}`;
+  }
+
+  function createEntry() {
+    const container = currentContainer();
+    const kind = $('new-kind').value;
+    if (Array.isArray(container)) {
+      container.push(defaultValue(kind));
+      renderFolder();
+      commitHistory();
+      select(String(container.length - 1));
+      return;
+    }
+    const name = uniqueName(container, `new ${kind}`);
+    container[name] = defaultValue(kind);
+    renderFolder();
+    commitHistory();
+    select(name);
+    beginRename();
+  }
+
+  function duplicateEntry() {
+    const container = currentContainer();
+    if (state.selected === null) return;
+    if (Array.isArray(container)) {
+      const index = Number(state.selected);
+      container.splice(index + 1, 0, clone(container[index]));
+      renderFolder();
+      commitHistory();
+      select(String(index + 1));
+      return;
+    }
+    const copy = uniqueName(container, `${state.selected} copy`);
+    const original = state.selected;
+    replaceObjectEntries(container, entries => {
+      const result = [];
+      for (const [key, value] of entries) {
+        result.push([key, value]);
+        if (key === original) result.push([copy, clone(value)]);
+      }
+      return result;
+    });
+    renderFolder();
+    commitHistory();
+    select(copy);
+  }
+
+  function deleteEntry() {
+    const container = currentContainer();
+    if (state.selected === null) return;
+    const label = Array.isArray(container) ? `[${state.selected}]` : state.selected;
+    if (Array.isArray(container)) container.splice(Number(state.selected), 1);
+    else delete container[state.selected];
+    state.selected = null;
+    renderFolder();
+    commitHistory();
+    refreshControls();
+    report(`Deleted ${label}. Ctrl+Z puts it back.`);
+  }
+
+  // Rebuilding preserves property order, which delete-then-add would not: a
+  // renamed field would jump to the end of the document.
+  function replaceObjectEntries(container, transform) {
+    const rebuilt = transform(Object.entries(container));
+    for (const key of Object.keys(container)) delete container[key];
+    for (const [key, value] of rebuilt) container[key] = value;
+  }
+
+  function canRename() {
+    return state.mode === 'folders'
+      && state.selected !== null
+      && !Array.isArray(currentContainer());
+  }
+
+  function beginRename() {
+    if (!canRename()) return;
+    const tile = tileFor(state.selected);
+    if (!tile) return;
+    const label = tile.querySelector('.label');
+    const original = state.selected;
+    const input = document.createElement('input');
+    input.className = 'rename';
+    input.type = 'text';
+    input.value = original;
+    label.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let settled = false;
+    const cancel = () => {
+      if (settled) return;
+      settled = true;
+      renderFolder();
+      refreshControls();
+    };
+    const commit = () => {
+      if (settled) return;
+      const name = input.value;
+      if (name === original) return cancel();
+      settled = true;
+      const container = currentContainer();
+      if (!name) {
+        report('A property name cannot be empty.', true);
+        renderFolder();
+        return refreshControls();
+      }
+      if (name in container) {
+        report(`'${name}' already exists in this folder.`, true);
+        renderFolder();
+        return refreshControls();
+      }
+      replaceObjectEntries(container, entries =>
+        entries.map(([key, value]) => [key === original ? name : key, value]));
+      state.selected = name;
+      renderFolder();
+      commitHistory();
+      refreshControls();
+    };
+
+    input.onkeydown = event => {
+      if (event.key === 'Enter') { event.preventDefault(); commit(); }
+      else if (event.key === 'Escape') { event.preventDefault(); cancel(); }
+      event.stopPropagation();
+    };
+    input.onblur = commit;
+  }
+
+  // ---- controls -------------------------------------------------------------
+
+  function refreshControls() {
+    const loaded = !!state.asset;
+    const folders = loaded && state.mode === 'folders';
+    const hasSelection = folders && state.selected !== null;
+    $('save').disabled = !loaded || !isDirty() || state.busy;
+    $('reload').disabled = !loaded || state.busy;
+    $('undo').disabled = !loaded || (history.past.length === 0 && !hasPendingEdit());
+    $('redo').disabled = !loaded || history.future.length === 0;
+    $('mode').disabled = !loaded;
+    $('up').disabled = !folders || state.pointer === '';
+    $('new').disabled = !folders || !isFolder(currentContainer());
+    $('new-kind').disabled = $('new').disabled;
+    $('rename').disabled = !canRename();
+    $('duplicate').disabled = !hasSelection;
+    $('delete').disabled = !hasSelection;
+    $('dirty').textContent = isDirty() ? '● unsaved' : '';
+  }
+
+  function setDocument(text) {
+    state.baseline = text;
+    state.pointer = '';
+    state.selected = null;
+    $('editor').value = text;
+    if (state.mode === 'folders') {
+      try {
+        state.document = parseDocument(text);
+      } catch (error) {
+        // A document the browser cannot model still has to be editable.
+        state.mode = 'text';
+        report(`${error.message} Opened as raw JSON.`, true);
+      }
+    }
+    renderMode();
+    resetHistory();
+    refreshControls();
+  }
+
+  function toggleMode() {
+    if (state.mode === 'folders') {
+      $('editor').value = stringify(state.document);
+      state.mode = 'text';
+      renderMode();
+      $('editor').focus();
+      return;
+    }
+    state.document = parseDocument($('editor').value);
+    state.mode = 'folders';
+    state.pointer = clampPointer(state.pointer);
+    state.selected = null;
+    renderMode();
+  }
+
+  function clearAsset() {
+    state.asset = null;
+    state.document = null;
+    state.mode = 'folders';
+    state.pointer = '';
+    state.selected = null;
+    state.baseline = '';
+    $('editor').value = '';
+    $('asset-title').textContent = 'Select an asset';
+    $('asset-path').textContent = '';
+    renderMode();
+    resetHistory();
+    refreshControls();
+    document.querySelectorAll('#assets button').forEach(node => node.classList.remove('selected'));
+  }
+
+  function confirmDiscard() {
+    return !isDirty()
+      || confirm(`'${state.asset.relativeJsonPath}' has unsaved changes. Discard them?`);
+  }
+
+  // ---- server ---------------------------------------------------------------
+
+  async function loadStatus(runSearch = true) {
+    const status = await call('cms_status');
+    $('connection').textContent = 'connected';
+    $('connection').className = 'ok';
+    const runtime = status.runtime || {};
+    $('runtime').textContent = runtime.available
+      ? runtime.inSync
+        ? `runtime snapshot: in sync (${runtime.modules?.length ?? 0} modules)`
+        : `runtime snapshot: ${runtime.differences?.length ?? 0} disk change(s) pending restart`
+      : 'disk editor only';
+    const modules = status.modules || await call('modules_list');
+    state.modules = Array.isArray(modules) ? modules : modules.modules || [];
+    // Rebuilding the options resets the selection to the first module, and
+    // assigning innerHTML fires no change event, so nothing would clear the
+    // asset that is still on screen. That silently pointed the next save at the
+    // wrong module while the editor kept showing the old document.
+    const previousModule = $('module').value;
+    $('module').innerHTML = state.modules.map(module => {
+      const id = module.moduleId || module.id;
+      return `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`;
+    }).join('');
+    if (previousModule) {
+      const stillMounted = state.modules.some(
+        module => (module.moduleId || module.id) === previousModule);
+      if (stillMounted) $('module').value = previousModule;
+      else clearAsset();
+    }
+    state.moduleId = $('module').value;
+    if (runSearch) await search();
+  }
+
+  async function search() {
+    const revision = ++searchRevision;
+    const moduleId = $('module').value;
+    if (!moduleId) return;
+    const result = await call('asset_search', { moduleId, text: $('query').value, limit: 200 });
+    if (revision !== searchRevision) return;
+    const assets = Array.isArray(result) ? result : result.items || result.assets || [];
+    $('assets').innerHTML = '';
+    for (const asset of assets) {
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      button.textContent = asset.displayKey || formatKey(asset.key) || asset.relativeJsonPath;
+      button.title = asset.relativeJsonPath || '';
+      if (state.asset && state.asset.relativeJsonPath === asset.relativeJsonPath
+          && state.asset.moduleId === moduleId) {
+        button.classList.add('selected');
+      }
+      button.onclick = () => guard(loadAsset(asset));
+      item.appendChild(button);
+      $('assets').appendChild(item);
+    }
+  }
+
+  async function loadAsset(asset) {
+    if (!confirmDiscard()) return;
+    const moduleId = $('module').value;
+    const result = await call('asset_get', {
+      moduleId,
+      relativeJsonPath: asset.relativeJsonPath,
+      key: asset.key
+    });
+    state.asset = {
+      moduleId,
+      relativeJsonPath: result.relativeJsonPath || asset.relativeJsonPath,
+      key: result.key || asset.key,
+      title: asset.displayKey || formatKey(asset.key) || asset.relativeJsonPath,
+      documentSha256: result.documentSha256
+    };
+    document.querySelectorAll('#assets button').forEach(node => node.classList.toggle(
+      'selected',
+      node.title === state.asset.relativeJsonPath));
+    $('asset-title').textContent = state.asset.title;
+    $('asset-path').textContent = state.asset.relativeJsonPath || '';
+    setDocument(stringify(result.document));
+    report(`Loaded ${state.asset.relativeJsonPath}`);
+  }
+
+  async function reloadAsset() {
+    if (!state.asset) return;
+    await loadAsset({ ...state.asset, displayKey: state.asset.title });
+  }
+
+  async function save() {
+    if (!state.asset) throw new Error('Select an asset first.');
+    if (state.busy) return;
+    if (!isDirty()) {
+      report('No changes to save.');
+      return;
+    }
+
+    const text = currentText();
+    let documentValue;
+    try { documentValue = parseDocument(text); }
+    catch (error) {
+      throw new Error(error instanceof SyntaxError ? `Not valid JSON: ${error.message}` : error.message);
+    }
+
+    state.busy = true;
+    refreshControls();
+    try {
+      const result = await call('asset_save', {
+        moduleId: state.asset.moduleId,
+        relativeJsonPath: state.asset.relativeJsonPath,
+        document: documentValue,
+        expectedDocumentSha256: state.asset.documentSha256
+      });
+      state.asset.documentSha256 = result.documentSha256;
+      state.asset.relativeJsonPath = result.relativeJsonPath || state.asset.relativeJsonPath;
+      state.baseline = text;
+      report(result.changed
+        ? `Saved ${result.relativeJsonPath} — module hash ${result.contentHash}`
+        : 'No changes to save.');
+    } catch (error) {
+      if (error.code === 'content_conflict') {
+        error.message += ' Press Reload to take the version on disk, or copy your edits out first.';
+      }
+      throw error;
+    } finally {
+      state.busy = false;
+      refreshControls();
+    }
+    await loadStatus(false);
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, character => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[character]);
+  }
+
+  function formatKey(key) {
+    if (!key || typeof key !== 'object') return key || '';
+    return `${key.Mod}:${key.Type}/${key.Key}@${key.Version}`;
+  }
+
+  // ---- wiring ---------------------------------------------------------------
+
+  $('refresh').onclick = () => guard(search());
+  let searchTimer = 0;
+  $('query').oninput = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => guard(search()), 180);
+  };
+  $('module').onchange = () => {
+    if (!confirmDiscard()) {
+      $('module').value = state.moduleId;
+      return;
+    }
+    state.moduleId = $('module').value;
+    clearAsset();
+    guard(search());
+  };
+  $('schema').onclick = () => guard(call('schema_list').then(report));
+  $('save').onclick = () => guard(save());
+  $('reload').onclick = () => guard(reloadAsset());
+  $('undo').onclick = undo;
+  $('redo').onclick = redo;
+  $('up').onclick = navigateUp;
+  $('new').onclick = createEntry;
+  $('rename').onclick = beginRename;
+  $('duplicate').onclick = duplicateEntry;
+  $('delete').onclick = deleteEntry;
+  $('mode').onclick = () => {
+    try { toggleMode(); }
+    catch (error) {
+      report(error instanceof SyntaxError ? `Not valid JSON: ${error.message}` : error.message, true);
+    }
+  };
+
+  $('editor').oninput = () => {
+    scheduleHistoryCommit();
+    refreshControls();
+  };
+
+  function isTextEntry(element) {
+    return element instanceof HTMLInputElement
+      || element instanceof HTMLTextAreaElement
+      || element instanceof HTMLSelectElement;
+  }
+
+  function moveSelection(offset) {
+    const tiles = [...$('grid').children];
+    if (tiles.length === 0) return;
+    const current = tiles.findIndex(tile => tile.dataset.token === state.selected);
+    const next = Math.max(0, Math.min(tiles.length - 1, current < 0 ? 0 : current + offset));
+    select(tiles[next].dataset.token);
+    tiles[next].scrollIntoView({ block: 'nearest' });
+  }
+
+  function gridColumns() {
+    const columns = getComputedStyle($('grid')).gridTemplateColumns;
+    return Math.max(1, columns.split(' ').filter(Boolean).length);
+  }
+
+  window.addEventListener('keydown', event => {
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && !event.altKey) {
+      // event.code is the physical key, so the shortcuts keep working on a
+      // non-Latin layout where event.key reports 'ы' or 'я'.
+      const typed = (event.key || '').toLowerCase();
+      const pressed = name => event.code === `Key${name.toUpperCase()}` || typed === name;
+      if (pressed('s')) {
+        event.preventDefault();
+        guard(save());
+        return;
+      }
+      if (state.mode === 'text' && document.activeElement !== $('editor')) return;
+      if (pressed('z') && !event.shiftKey) {
+        event.preventDefault();
+        undo();
+        return;
+      }
+      if (pressed('y') || (pressed('z') && event.shiftKey)) {
+        event.preventDefault();
+        redo();
+      }
+      return;
+    }
+
+    if (state.mode !== 'folders' || !state.asset || isTextEntry(document.activeElement)) return;
+    switch (event.key) {
+      case 'Backspace':
+        event.preventDefault();
+        navigateUp();
+        break;
+      case 'Delete':
+        event.preventDefault();
+        deleteEntry();
+        break;
+      case 'F2':
+        event.preventDefault();
+        beginRename();
+        break;
+      case 'Enter':
+        if (state.selected !== null) {
+          event.preventDefault();
+          open(state.selected);
+        }
+        break;
+      case 'ArrowLeft':
+        event.preventDefault();
+        moveSelection(-1);
+        break;
+      case 'ArrowRight':
+        event.preventDefault();
+        moveSelection(1);
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        moveSelection(-gridColumns());
+        break;
+      case 'ArrowDown':
+        event.preventDefault();
+        moveSelection(gridColumns());
+        break;
+    }
+  });
+
+  window.addEventListener('beforeunload', event => {
+    if (!isDirty()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
+  refreshControls();
+  loadStatus().catch(error => {
+    $('connection').textContent = 'disconnected';
+    $('connection').className = 'error';
+    report(error.message, true);
+  });
+</script>
+</body>
+</html>

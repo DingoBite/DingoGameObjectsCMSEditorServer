@@ -1,0 +1,284 @@
+.dingocms-root {
+    --canvas: #171a1f;
+    --panel: #20252c;
+    --panel-raised: #272d36;
+    --line: #39424e;
+    --text: #edf4f7;
+    --muted: #95a3af;
+    --cyan: #59d9e8;
+    --cyan-dim: #214a51;
+    --amber: #eeb65b;
+    --red: #ed7777;
+    background-color: var(--canvas);
+    color: var(--text);
+}
+
+.dingocms-scroll {
+    padding: 22px 24px 30px 24px;
+}
+
+.hero {
+    margin-bottom: 18px;
+}
+
+.eyebrow {
+    color: var(--cyan);
+    font-size: 10px;
+    -unity-font-style: bold;
+    letter-spacing: 1.5px;
+    margin-bottom: 5px;
+}
+
+.hero-row,
+.client-top,
+.action-rail,
+.client-actions,
+.token-row,
+.executable-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.hero-heading,
+.client-identity,
+.token-field,
+.executable-field {
+    flex-grow: 1;
+}
+
+.title {
+    color: var(--text);
+    font-size: 27px;
+    -unity-font-style: bold;
+    margin-bottom: 2px;
+}
+
+.subtitle,
+.card-description,
+.field-hint,
+.host-detail,
+.client-detail,
+.footer-note {
+    color: var(--muted);
+    white-space: normal;
+}
+
+.subtitle {
+    font-size: 12px;
+}
+
+.status-chip,
+.client-status {
+    border-radius: 2px;
+    border-width: 1px;
+    padding: 6px 9px;
+    font-size: 9px;
+    -unity-font-style: bold;
+    letter-spacing: 0.7px;
+}
+
+.status-running {
+    color: var(--cyan);
+    background-color: var(--cyan-dim);
+    border-color: var(--cyan);
+}
+
+.status-pending {
+    color: var(--amber);
+    background-color: var(--panel-raised);
+    border-color: var(--amber);
+}
+
+.status-stopped {
+    color: var(--muted);
+    background-color: var(--panel);
+    border-color: var(--line);
+}
+
+.card {
+    position: relative;
+    background-color: var(--panel);
+    border-width: 1px;
+    border-color: var(--line);
+    border-radius: 4px;
+    padding: 17px 18px 18px 22px;
+    margin-bottom: 14px;
+}
+
+.card-rail {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background-color: var(--cyan);
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+}
+
+.card-label {
+    color: var(--text);
+    font-size: 11px;
+    -unity-font-style: bold;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+}
+
+.card-description {
+    font-size: 11px;
+    margin-bottom: 14px;
+}
+
+.form-field,
+.token-row,
+.executable-row,
+.auto-start {
+    margin-bottom: 10px;
+}
+
+.form-field > .unity-base-field__label,
+.token-field > .unity-base-field__label,
+.executable-field > .unity-base-field__label {
+    color: var(--muted);
+    min-width: 105px;
+    font-size: 10px;
+}
+
+.form-field .unity-base-text-field__input,
+.token-field .unity-base-text-field__input,
+.executable-field .unity-base-text-field__input {
+    background-color: #15191e;
+    border-width: 1px;
+    border-color: #323a44;
+    color: var(--text);
+}
+
+.token-row .compact-button,
+.executable-row .compact-button {
+    margin-left: 6px;
+}
+
+.compact-button {
+    min-width: 66px;
+}
+
+.field-hint {
+    font-size: 10px;
+    margin: -4px 0 10px 110px;
+}
+
+.host-detail {
+    min-height: 30px;
+    margin: -2px 0 11px 110px;
+    padding: 7px 9px;
+    background-color: #181d23;
+    border-left-width: 2px;
+    border-left-color: var(--cyan-dim);
+    font-size: 10px;
+}
+
+.auto-start {
+    color: var(--text);
+}
+
+.action-rail {
+    border-top-width: 1px;
+    border-top-color: var(--line);
+    padding-top: 13px;
+    margin-top: 3px;
+}
+
+.action-rail > Button,
+.client-actions > Button {
+    margin-right: 7px;
+}
+
+Button {
+    min-height: 36px;
+    border-radius: 3px;
+}
+
+.primary-button,
+.client-primary {
+    background-color: var(--cyan-dim);
+    border-color: var(--cyan);
+    color: var(--cyan);
+    -unity-font-style: bold;
+}
+
+.danger-button {
+    background-color: #4d2b2e;
+    border-color: var(--red);
+    color: #ffb0b0;
+}
+
+.server-message {
+    color: var(--cyan);
+    font-size: 10px;
+    margin-top: 10px;
+    white-space: normal;
+}
+
+.message-error {
+    color: var(--red);
+}
+
+.client-row {
+    background-color: var(--panel-raised);
+    border-left-width: 2px;
+    border-left-color: var(--line);
+    padding: 12px 13px;
+    margin-top: 8px;
+}
+
+.client-name {
+    color: var(--text);
+    font-size: 13px;
+    -unity-font-style: bold;
+}
+
+.client-path {
+    color: #72808c;
+    font-size: 9px;
+    margin-top: 2px;
+}
+
+.client-status {
+    padding: 4px 7px;
+}
+
+.client-ok {
+    color: var(--cyan);
+    border-color: var(--cyan);
+    background-color: var(--cyan-dim);
+}
+
+.client-warn {
+    color: var(--amber);
+    border-color: var(--amber);
+    background-color: #4a3d25;
+}
+
+.client-error {
+    color: var(--red);
+    border-color: var(--red);
+    background-color: #4d2b2e;
+}
+
+.client-idle {
+    color: var(--muted);
+    border-color: var(--line);
+    background-color: var(--panel);
+}
+
+.client-detail {
+    font-size: 10px;
+    margin: 9px 0;
+}
+
+.footer-note {
+    border-left-width: 2px;
+    border-left-color: var(--amber);
+    padding-left: 10px;
+    font-size: 10px;
+}
