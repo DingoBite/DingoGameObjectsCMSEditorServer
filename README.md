@@ -23,26 +23,6 @@ UI may expose the same generic create/clone operations. `manifest.json` is
 always regenerated from the staged module state and cannot be edited as an
 ordinary resource.
 
-## Explicit start modes
-
-The SnakeAndMice composition root starts the server only when explicitly
-requested. Alongside gameplay, use:
-
-```text
---dingo-cms-editor-server
-```
-
-To author a clean or incomplete library without constructing a gameplay
-catalog, use both flags:
-
-```text
---dingo-cms-editor-server --dingo-cms-editor-authoring-only
-```
-
-Authoring-only mode starts before gameplay initialization, works with an empty
-`AppData/assets` directory, and does not create a gameplay content snapshot.
-The authoring-only flag by itself does not enable the server.
-
 Directories directly under the assets root whose names begin with `.` are
 operational directories, not DingoCMS modules. They are omitted from runtime
 module discovery, EditorServer listings, and module counts. This allows the
@@ -52,55 +32,77 @@ invalid module.
 ## Unity Editor window
 
 Open `Window/DingoCMS/Editor Server` to manage the authoring server without
-entering Play Mode or constructing a gameplay catalog. The MCP listener always
-runs in an authoring-only Windows Player outside the Unity process. Compilation,
-domain reload, Play Mode and Unity restarts therefore do not close or rebind the
-MCP port. Unity is only the launcher and status client, matching the process
-boundary used by UnityMCP.
+entering Play Mode or constructing a gameplay catalog. The MCP listener is a
+standalone Python broker outside the Unity process. It does not build or launch
+a Unity Player and never evaluates game scenes, player manifests or gameplay
+build preprocessors. Compilation, domain reload, Play Mode and Unity restarts
+therefore do not close or rebind the MCP port. Unity is only the launcher and
+project-session client, matching the process boundary used by UnityMCP.
+Project-specific authoring operations run in the connected Unity Editor, where
+that project's CLR types and DingoCMS schemas are actually loaded.
 
-The launcher records a project-scoped PID, process creation time, executable
-path, port, project id, source-build fingerprint and random per-launch instance
+All projects use the same loopback port and bearer token. `Start Server`
+controls only the broker process owned by the current project, starts the
+standalone broker, and connects the current project immediately. `Connect`
+never launches a process: it only registers this project on a compatible shared
+server that is already running, including one owned by another Unity project. `Disconnect`
+removes only this project's route; it does not stop the shared process or
+affect other projects. Python runtime, token, port and restart policy live under
+the collapsed `Manual Server Launch` section.
+
+Registration contains the project name, stable project id, project path, Unity
+version and mounted `assets` root. The server returns an ephemeral `session_id`
+and a readable instance id such as `SnakeAndMice@818a7e589799f061`.
+The Unity Editor owns its authoring context and library lease and answers the
+broker through one persistent authenticated WebSocket, using the same
+register/registered/register_tools/execute/command_result lifecycle as
+UnityMCP. Ping/pong renews the session lease, so crashed or closed Editors
+disappear automatically. Sessions reconnect after a Unity domain reload while
+the Editor session remains open.
+
+MCP clients can read `dingocms://instances` to list the connected projects.
+Every tool schema includes optional `dingo_cms_instance`. It may be omitted
+when exactly one project is connected; with multiple projects it must contain
+an instance id, project id, unique project name, or server-issued session id.
+This is the same explicit multi-instance routing model used by UnityMCP.
+
+The launcher records a project-scoped PID, process creation time, Python runtime
+path, port, project id, broker-source fingerprint and random per-launch instance
 token in `Library/DingoCmsEditorServer`. A host is reported as running only
 after both the Windows executable identity and an authenticated `/health`
 response match that record. Stop kills only that exact verified process. An
 uncertain identity remains visibly retained and blocks a second daemon.
-`Keep detached server running` restarts a confirmed crashed host with backoff;
+`Keep owned shared server running` restarts a confirmed crashed host with backoff;
 the backoff and stable-health window survive domain reload. It does not bounce a
 healthy host during compilation or reload.
 
-`Build host` writes a companion fingerprint manifest next to the Player. The
-fingerprint covers Player-side DingoCMS source. If that source changes, the
-window marks the still-owned host as requiring a rebuild instead of silently
-accepting an old binary or entering a restart loop. Stop that host, build once,
-and start the fresh Player. The old in-Unity `HttpListener` mode is no longer
-startable.
+Python 3 is required for the standalone broker. The launcher discovers
+`python.exe` from `DINGO_CMS_BROKER_PYTHON`, `PATH`, common per-user installs or
+`C:\\Python*`; it can also be selected under `Manual Server Launch`. The broker
+fingerprint covers only the broker script and embedded Web editor. If either
+changes while a broker is running, the window asks for a stop/start cycle. No
+Unity build, build metadata sidecar or game-linked executable exists in this
+flow. There is no in-Unity listener, command-line host, or alternative server
+mode.
 
-The `Configure` buttons are also explicit. They update only this project's
+The `Configure` buttons are also explicit. Every project config points to the
+same MCP URL. They update only this project's
 `.codex/config.toml` and `.mcp.json`, preserve unrelated entries and store a
 backup below `Library/DingoCmsEditorServer/ConfigBackups`. The reusable bearer
 token is referenced through `DINGO_CMS_EDITOR_TOKEN`; it is never written into
 either project config. The window does not modify the user's global Codex or
 Claude Code configuration.
 
-Optional arguments:
+`DINGO_CMS_EDITOR_TOKEN` is the reusable MCP bearer token shared by the Unity
+projects and clients. Unity exposes only a separate one-time Web bootstrap URL,
+never the reusable bearer token.
 
-```text
---dingo-cms-editor-port=17844
---dingo-cms-editor-token=<at-least-24-characters>
-```
-
-`DINGO_CMS_EDITOR_TOKEN` is used when the token argument is absent. If neither
-is supplied, the server creates an internal random bearer token; configure an
-explicit token to connect MCP clients. Unity logs only a separate one-time Web
-bootstrap URL, never the reusable MCP bearer. The public
-`DingoCmsEditorServerRuntime.Start` API is the integration point for a future
-runtime UI.
-
-The listener is loopback-only:
+The shared listener and Unity session bridge are loopback-only:
 
 ```text
 MCP: http://127.0.0.1:17844/mcp
 Web: http://127.0.0.1:17844/
+Unity bridge: ws://127.0.0.1:17844/hub/plugin
 ```
 
 ## Codex

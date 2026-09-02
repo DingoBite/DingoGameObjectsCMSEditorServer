@@ -16,7 +16,7 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
         public readonly string ExecutablePath;
         public readonly long ProcessStartUtcTicks;
         public readonly bool Ready;
-        public readonly string BuildFingerprint;
+        public readonly string BrokerFingerprint;
 
         public DingoCmsEditorHostIdentity(
             int processId,
@@ -26,7 +26,7 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
             string executablePath,
             long processStartUtcTicks = 0,
             bool ready = false,
-            string buildFingerprint = null)
+            string brokerFingerprint = null)
         {
             if (processId <= 0)
             {
@@ -57,7 +57,7 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
             ExecutablePath = RequireText(executablePath, nameof(executablePath));
             ProcessStartUtcTicks = processStartUtcTicks;
             Ready = ready;
-            BuildFingerprint = NormalizeOptional(buildFingerprint);
+            BrokerFingerprint = NormalizeOptional(brokerFingerprint);
         }
 
         public static void WriteAtomic(
@@ -83,7 +83,7 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
                     ["executablePath"] = identity.ExecutablePath,
                     ["processStartUtcTicks"] = identity.ProcessStartUtcTicks,
                     ["ready"] = identity.Ready,
-                    ["buildFingerprint"] = identity.BuildFingerprint,
+                    ["brokerFingerprint"] = identity.BrokerFingerprint,
                 };
                 File.WriteAllText(
                     temporaryPath,
@@ -126,15 +126,25 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
                     return false;
                 }
 
+                var processStartUtcTicks =
+                    ReadOptionalProcessStartTicks(document);
+                var brokerFingerprint =
+                    ReadOptionalText(document, "brokerFingerprint");
+                if (processStartUtcTicks <= 0
+                    || string.IsNullOrWhiteSpace(brokerFingerprint))
+                {
+                    return false;
+                }
+
                 identity = new DingoCmsEditorHostIdentity(
                     processId,
                     port,
                     projectId,
                     instanceToken,
                     executablePath,
-                    ReadOptionalProcessStartTicks(document),
+                    processStartUtcTicks,
                     ReadOptionalBool(document, "ready"),
-                    ReadOptionalText(document, "buildFingerprint"));
+                    brokerFingerprint);
                 return true;
             }
             catch (ArgumentException)

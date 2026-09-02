@@ -42,7 +42,7 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
                 @"C:\Tools\DingoCmsHost.exe",
                 processStartUtcTicks: 638606160000000000L,
                 ready: true,
-                buildFingerprint: "build-fingerprint-a");
+                brokerFingerprint: "broker-fingerprint-a");
 
             DingoCmsEditorHostIdentity.WriteAtomic(_path, first);
             DingoCmsEditorHostIdentity.WriteAtomic(_path, replacement);
@@ -60,8 +60,8 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
                 Is.EqualTo(replacement.ProcessStartUtcTicks));
             Assert.That(restored.Ready, Is.True);
             Assert.That(
-                restored.BuildFingerprint,
-                Is.EqualTo(replacement.BuildFingerprint));
+                restored.BrokerFingerprint,
+                Is.EqualTo(replacement.BrokerFingerprint));
             Assert.That(
                 Directory.GetFiles(_directory, "*.tmp").Any(),
                 Is.False);
@@ -92,7 +92,7 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
         }
 
         [Test]
-        public void TryRead_LegacyStateDefaultsToNotReady()
+        public void TryRead_RejectsPreBrokerIdentity()
         {
             Directory.CreateDirectory(_directory);
             File.WriteAllText(
@@ -107,13 +107,8 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
                 }.ToString());
 
             Assert.That(
-                DingoCmsEditorHostIdentity.TryRead(
-                    _path,
-                    out var identity),
-                Is.True);
-            Assert.That(identity.Ready, Is.False);
-            Assert.That(identity.ProcessStartUtcTicks, Is.Zero);
-            Assert.That(identity.BuildFingerprint, Is.Null);
+                DingoCmsEditorHostIdentity.TryRead(_path, out _),
+                Is.False);
         }
 
         [Test]
@@ -189,7 +184,9 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
                 port,
                 "project-a",
                 instanceToken,
-                @"C:\Tools\DingoCmsHost.exe");
+                @"C:\Tools\DingoCmsHost.exe",
+                processStartUtcTicks: 638606160000000000L,
+                brokerFingerprint: "broker-source-fingerprint");
         }
     }
 }
