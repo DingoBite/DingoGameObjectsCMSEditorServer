@@ -7,6 +7,7 @@ using DingoGameObjectsCMSEditorServer.Transport;
 using DingoGameObjectsCMSEditorServer.Web;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+using Process = System.Diagnostics.Process;
 
 namespace DingoGameObjectsCMSEditorServer.Runtime
 {
@@ -56,8 +57,11 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
                 server = new DingoCmsEditorHttpServer(
                     applicationRouter,
                     options.Port,
-                    options.Token);
+                    options.Token,
+                    options.InstanceToken,
+                    options.BuildFingerprint);
                 server.Start();
+                WriteHostIdentity(options);
                 Debug.Log(
                     "DingoCMS Editor Server started explicitly.\n"
                     + $"MCP: {options.McpUrl}\n"
@@ -80,6 +84,10 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
                 }
                 finally
                 {
+                    // The detached editor writes ownership before launch.
+                    // Keep that durable identity when startup fails so the
+                    // editor can terminate the exact unhealthy process and
+                    // cannot spawn duplicates against the same port.
                     authoring.Shutdown();
                 }
                 throw;
@@ -109,7 +117,14 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
             }
             finally
             {
-                _authoring.Shutdown();
+                try
+                {
+                    _authoring.Shutdown();
+                }
+                finally
+                {
+                    DeleteHostIdentity(Options);
+                }
             }
         }
 
@@ -122,6 +137,47 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
             }
 
             return _server.CreateBrowserBootstrapUrl();
+        }
+
+        private static void WriteHostIdentity(
+            DingoCmsEditorServerOptions options)
+        {
+            if (string.IsNullOrWhiteSpace(options?.HostStateFile))
+                return;
+
+            using var process = Process.GetCurrentProcess();
+            var executablePath = process.MainModule?.FileName
+                                 ?? Environment.GetCommandLineArgs()[0];
+            var processStartUtcTicks = process.StartTime
+                .ToUniversalTime()
+                .Ticks;
+            DingoCmsEditorHostIdentity.WriteAtomic(
+                options.HostStateFile,
+                new DingoCmsEditorHostIdentity(
+                    process.Id,
+                    options.Port,
+                    options.ProjectId,
+                    options.InstanceToken,
+                    executablePath,
+                    processStartUtcTicks,
+                    ready: true,
+                    buildFingerprint: options.BuildFingerprint));
+        }
+
+        private static void DeleteHostIdentity(
+            DingoCmsEditorServerOptions options)
+        {
+            if (string.IsNullOrWhiteSpace(options?.HostStateFile)
+                || string.IsNullOrWhiteSpace(options.InstanceToken))
+            {
+                return;
+            }
+
+            using var process = Process.GetCurrentProcess();
+            DingoCmsEditorHostIdentity.DeleteIfOwned(
+                options.HostStateFile,
+                process.Id,
+                options.InstanceToken);
         }
     }
 }

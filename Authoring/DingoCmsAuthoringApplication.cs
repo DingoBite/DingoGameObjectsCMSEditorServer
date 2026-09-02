@@ -3,6 +3,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.ExceptionServices;
+using System.Threading;
 using DingoGameObjectsCMS.AssetLibrary.AssetsEdit;
 using DingoGameObjectsCMS.AssetLibrary.Manifest;
 using DingoGameObjectsCMS.Modding;
@@ -17,6 +19,8 @@ namespace DingoGameObjectsCMSEditorServer.Authoring
         private const int DEFAULT_SEARCH_LIMIT = 50;
         private const int MAX_SEARCH_LIMIT = 200;
         private const int MAX_JSON_DIFF_POINTERS = 200;
+        private static readonly int[] DIRECTORY_MOVE_RETRY_DELAYS_MS =
+            { 0, 5, 20, 50 };
 
         private static readonly ConcurrentDictionary<string, object> MODULE_LOCKS =
             new(StringComparer.OrdinalIgnoreCase);
@@ -1232,20 +1236,95 @@ namespace DingoGameObjectsCMSEditorServer.Authoring
             var stageMoved = false;
             try
             {
-                Directory.Move(stageRoot, previousRoot);
+                MoveDirectoryWithTransientRetry(stageRoot, previousRoot);
                 stageMoved = true;
-                Directory.Move(workingRoot, stageRoot);
+                MoveDirectoryWithTransientRetry(workingRoot, stageRoot);
             }
-            catch
+            catch (Exception replacementFailure)
             {
                 if (!Directory.Exists(stageRoot) && stageMoved && Directory.Exists(previousRoot))
                 {
-                    Directory.Move(previousRoot, stageRoot);
+                    try
+                    {
+                        MoveDirectoryWithTransientRetry(
+                            previousRoot,
+                            stageRoot);
+                    }
+                    catch (Exception rollbackMoveFailure)
+                    {
+                        try
+                        {
+                            DingoCmsAuthoringUtils.CopyDirectory(
+                                previousRoot,
+                                stageRoot);
+                            TryDeleteOwnedDirectory(previousRoot);
+                        }
+                        catch (Exception rollbackCopyFailure)
+                        {
+                            throw new AggregateException(
+                                "The staging replacement and rollback both "
+                                + "failed. The original staging copy was "
+                                + $"retained at '{previousRoot}'.",
+                                replacementFailure,
+                                rollbackMoveFailure,
+                                rollbackCopyFailure);
+                        }
+                    }
                 }
-                throw;
+                ExceptionDispatchInfo.Capture(replacementFailure).Throw();
+                throw new InvalidOperationException(
+                    "Unreachable staging rollback state.");
             }
 
             TryDeleteOwnedDirectory(previousRoot);
+        }
+
+        private static void MoveDirectoryWithTransientRetry(
+            string sourcePath,
+            string destinationPath)
+        {
+            try
+            {
+                Directory.Move(sourcePath, destinationPath);
+                return;
+            }
+            catch (Exception firstFailure) when (
+                firstFailure is IOException
+                || firstFailure is UnauthorizedAccessException)
+            {
+                for (var retryIndex = 0;
+                     retryIndex < DIRECTORY_MOVE_RETRY_DELAYS_MS.Length;
+                     retryIndex++)
+                {
+                    if (!Directory.Exists(sourcePath)
+                        || Directory.Exists(destinationPath))
+                    {
+                        ExceptionDispatchInfo.Capture(firstFailure).Throw();
+                    }
+
+                    var delayMilliseconds =
+                        DIRECTORY_MOVE_RETRY_DELAYS_MS[retryIndex];
+                    if (delayMilliseconds > 0)
+                    {
+                        Thread.Sleep(delayMilliseconds);
+                    }
+                    try
+                    {
+                        Directory.Move(sourcePath, destinationPath);
+                        return;
+                    }
+                    catch (IOException)
+                    {
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                    }
+                }
+
+                ExceptionDispatchInfo.Capture(firstFailure).Throw();
+                throw new InvalidOperationException(
+                    "Unreachable directory move retry state.");
+            }
         }
 
         private static bool TryDeleteRecoveryBackup(string backupRoot, string moduleRecoveryRoot)

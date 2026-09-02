@@ -1,5 +1,6 @@
 #if NEWTONSOFT_EXISTS
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -16,15 +17,20 @@ namespace DingoGameObjectsCMSEditorServer.Transport
 
         private const string SERVER_NAME = "DingoCMS Editor Server";
         private const string SERVER_VERSION = "0.1.0";
+        private const string INSTANCE_TOKEN_HEADER = "X-DingoCMS-Instance-Token";
         private const string SESSION_COOKIE_NAME = "DingoCmsEditorSession";
         private const int MAX_REQUEST_BODY_CHARACTERS = 32 * 1024 * 1024;
+        private static readonly TimeSpan SHUTDOWN_TIMEOUT = TimeSpan.FromSeconds(2);
 
         private readonly IDingoCmsEditorRequestRouter _router;
         private readonly string _bearerToken;
+        private readonly string _instanceToken;
+        private readonly string _buildFingerprint;
         private readonly HttpListener _listener;
         private readonly SemaphoreSlim _requestGate = new(1, 1);
         private readonly object _lifecycleGate = new();
         private readonly object _authenticationGate = new();
+        private readonly HashSet<DingoCmsEditorActiveRequest> _activeRequests = new();
 
         private CancellationTokenSource _shutdown;
         private Task _listenTask;
@@ -46,9 +52,23 @@ namespace DingoGameObjectsCMSEditorServer.Transport
                 }
             }
         }
-        public bool IsRunning => _started && !_disposed && _listener.IsListening;
+        public bool IsRunning
+        {
+            get
+            {
+                lock (_lifecycleGate)
+                {
+                    return _started && !_disposed && _listener.IsListening;
+                }
+            }
+        }
 
-        public DingoCmsEditorHttpServer(IDingoCmsEditorRequestRouter router, int port, string bearerToken)
+        public DingoCmsEditorHttpServer(
+            IDingoCmsEditorRequestRouter router,
+            int port,
+            string bearerToken,
+            string instanceToken = null,
+            string buildFingerprint = null)
         {
             _router = router ?? throw new ArgumentNullException(nameof(router));
             if (port is < 1 or > 65535)
@@ -64,6 +84,8 @@ namespace DingoGameObjectsCMSEditorServer.Transport
             Port = port;
             Origin = $"http://127.0.0.1:{port}";
             _bearerToken = bearerToken;
+            _instanceToken = instanceToken;
+            _buildFingerprint = buildFingerprint;
             _browserBootstrapToken = Guid.NewGuid().ToString("N")
                                      + Guid.NewGuid().ToString("N");
             _listener = new HttpListener
@@ -95,10 +117,19 @@ namespace DingoGameObjectsCMSEditorServer.Transport
                     return;
                 }
 
-                _shutdown = new CancellationTokenSource();
-                _listener.Start();
-                _started = true;
-                _listenTask = Task.Run(() => ListenAsync(_shutdown.Token));
+                var shutdown = new CancellationTokenSource();
+                try
+                {
+                    _listener.Start();
+                    _shutdown = shutdown;
+                    _started = true;
+                    _listenTask = Task.Run(() => ListenAsync(shutdown.Token));
+                }
+                catch
+                {
+                    shutdown.Dispose();
+                    throw;
+                }
             }
         }
 
@@ -106,6 +137,7 @@ namespace DingoGameObjectsCMSEditorServer.Transport
         {
             Task listenTask;
             CancellationTokenSource shutdown;
+            DingoCmsEditorActiveRequest[] activeRequests;
             lock (_lifecycleGate)
             {
                 if (_disposed)
@@ -114,72 +146,61 @@ namespace DingoGameObjectsCMSEditorServer.Transport
                 }
 
                 _disposed = true;
+                _started = false;
                 shutdown = _shutdown;
                 listenTask = _listenTask;
-                shutdown?.Cancel();
+                activeRequests = new DingoCmsEditorActiveRequest[_activeRequests.Count];
+                _activeRequests.CopyTo(activeRequests);
+            }
 
-                // Abort, not Stop/Close. Mono keeps its endpoint registrations
-                // in a static inside System.dll, which Unity's domain reload
-                // never unloads, and the graceful path can return with the
-                // prefix still registered. That registration then holds the
-                // port for the life of the editor process: every later start
-                // fails with "Only one usage of each socket address", and no
-                // code in the process can reclaim it. Abort tears the
-                // registration down with the connections.
-                try
-                {
-                    _listener.Abort();
-                }
-                catch (Exception exception) when (
-                    exception is ObjectDisposedException
-                    or InvalidOperationException
-                    or HttpListenerException)
-                {
-                }
+            shutdown?.Cancel();
 
-                try
+            // Abort, not Stop. Mono keeps endpoint registrations in a static
+            // inside System.dll, which survives Unity domain reload. Abort
+            // unregisters the prefix and tears down accepted connections.
+            AbortAndCloseListener();
+
+            // HttpListener does not guarantee that aborting the listener will
+            // close every already accepted request on all Unity/Mono versions.
+            // Close each tracked context explicitly so partial request bodies
+            // and blocked response writes are interrupted before reload.
+            foreach (var activeRequest in activeRequests)
+            {
+                AbortContext(activeRequest.Context);
+            }
+
+            var shutdownTasks = new List<Task>(activeRequests.Length + 1);
+            if (listenTask != null)
+            {
+                shutdownTasks.Add(listenTask);
+            }
+            foreach (var activeRequest in activeRequests)
+            {
+                if (activeRequest.Task != null)
                 {
-                    _listener.Close();
-                }
-                catch (Exception exception) when (
-                    exception is ObjectDisposedException
-                    or InvalidOperationException
-                    or HttpListenerException)
-                {
+                    shutdownTasks.Add(activeRequest.Task);
                 }
             }
 
-            if (listenTask != null && Task.CurrentId != listenTask.Id)
+            WaitForTasks(shutdownTasks, SHUTDOWN_TIMEOUT);
+
+            var listenDrained = listenTask == null || listenTask.IsCompleted;
+            var requestsDrained = true;
+            foreach (var activeRequest in activeRequests)
             {
-                try
-                {
-                    listenTask.Wait(TimeSpan.FromSeconds(1));
-                }
-                catch (AggregateException)
-                {
-                }
+                requestsDrained &= activeRequest.Task == null
+                                   || activeRequest.Task.IsCompleted;
             }
 
-            // No new contexts can be accepted after the listener closes. By
-            // taking the serialized request gate here, Dispose waits until a
-            // publish already in progress has reached its transactional end;
-            // queued requests observe the cancelled token and do not start.
-            //
-            // The wait is bounded because this runs on the editor main thread
-            // from beforeAssemblyReload. Waiting indefinitely there hangs the
-            // reload behind whatever request happens to be open, and a reload
-            // forced through that hang leaves the listener's endpoint
-            // registered for the rest of the process — after which no restart
-            // of the server can take the port again until Unity is restarted.
-            var drained = _requestGate.Wait(TimeSpan.FromSeconds(2));
-            shutdown?.Dispose();
-            if (drained)
+            // A handler that ignores cancellation may outlive the bounded
+            // reload wait. In that case its synchronization primitives stay
+            // alive with it; disposing them underneath the handler would turn
+            // a slow shutdown into an unobserved ObjectDisposedException.
+            if (listenDrained && requestsDrained)
             {
+                shutdown?.Dispose();
                 _requestGate.Dispose();
             }
-            // An undrained gate is deliberately leaked rather than disposed:
-            // the request still holding it would fault on a disposed handle,
-            // and one abandoned semaphore costs less than that.
         }
 
         private async Task ListenAsync(CancellationToken cancellationToken)
@@ -200,15 +221,57 @@ namespace DingoGameObjectsCMSEditorServer.Transport
                     break;
                 }
 
-                _ = Task.Run(() => HandleSafelyAsync(context, cancellationToken));
+                StartHandling(context, cancellationToken);
             }
         }
 
-        private async Task HandleSafelyAsync(HttpListenerContext context, CancellationToken cancellationToken)
+        private void StartHandling(HttpListenerContext context, CancellationToken cancellationToken)
         {
+            DingoCmsEditorActiveRequest activeRequest;
+            lock (_lifecycleGate)
+            {
+                if (_disposed || cancellationToken.IsCancellationRequested)
+                {
+                    activeRequest = null;
+                }
+                else
+                {
+                    activeRequest = new DingoCmsEditorActiveRequest(context);
+                    _activeRequests.Add(activeRequest);
+                    try
+                    {
+                        activeRequest.Task = Task.Run(
+                            () => HandleSafelyAsync(activeRequest, cancellationToken));
+                    }
+                    catch
+                    {
+                        _activeRequests.Remove(activeRequest);
+                        AbortContext(context);
+                        throw;
+                    }
+                }
+            }
+
+            if (activeRequest == null)
+            {
+                AbortContext(context);
+            }
+        }
+
+        private async Task HandleSafelyAsync(
+            DingoCmsEditorActiveRequest activeRequest,
+            CancellationToken cancellationToken)
+        {
+            var context = activeRequest.Context;
             try
             {
                 await HandleAsync(context, cancellationToken);
+            }
+            catch (OperationCanceledException) when (IsStopping(cancellationToken))
+            {
+            }
+            catch (Exception) when (IsStopping(cancellationToken))
+            {
             }
             catch (Exception exception)
             {
@@ -216,12 +279,10 @@ namespace DingoGameObjectsCMSEditorServer.Transport
             }
             finally
             {
-                try
+                CloseCompletedContext(context);
+                lock (_lifecycleGate)
                 {
-                    context.Response.Close();
-                }
-                catch
-                {
+                    _activeRequests.Remove(activeRequest);
                 }
             }
         }
@@ -249,6 +310,38 @@ namespace DingoGameObjectsCMSEditorServer.Transport
             if (request.HttpMethod == "GET" && path == "/")
             {
                 await HandleWebIndexAsync(request, response);
+                return;
+            }
+
+            if (path == "/health")
+            {
+                if (!IsBearerAuthenticated(request)
+                    || !IsExpectedInstance(request))
+                {
+                    await WriteUnauthorizedAsync(response);
+                    return;
+                }
+
+                if (request.HttpMethod == "GET")
+                {
+                    await WriteJsonAsync(response, HttpStatusCode.OK, new JObject
+                    {
+                        ["ok"] = true,
+                        ["processId"] = GetCurrentProcessId(),
+                        ["port"] = Port,
+                        ["instanceToken"] = _instanceToken,
+                        ["serverVersion"] = SERVER_VERSION,
+                        ["buildFingerprint"] = _buildFingerprint,
+                    });
+                    return;
+                }
+
+                response.Headers["Allow"] = "GET";
+                await WriteHttpErrorAsync(
+                    response,
+                    HttpStatusCode.MethodNotAllowed,
+                    "method_not_allowed",
+                    "The health endpoint only supports GET.");
                 return;
             }
 
@@ -308,7 +401,9 @@ namespace DingoGameObjectsCMSEditorServer.Transport
 
             AddCorsHeaders(request, response);
             response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
-            response.Headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id";
+            response.Headers["Access-Control-Allow-Headers"] =
+                "Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id, "
+                + INSTANCE_TOKEN_HEADER;
             response.StatusCode = (int)HttpStatusCode.NoContent;
         }
 
@@ -600,9 +695,7 @@ namespace DingoGameObjectsCMSEditorServer.Transport
 
         private bool IsAuthenticated(HttpListenerRequest request)
         {
-            var authorization = request.Headers["Authorization"];
-            const string bearerPrefix = "Bearer ";
-            if (!string.IsNullOrEmpty(authorization) && authorization.StartsWith(bearerPrefix, StringComparison.OrdinalIgnoreCase) && TokensMatch(authorization.Substring(bearerPrefix.Length), _bearerToken))
+            if (IsBearerAuthenticated(request))
             {
                 return true;
             }
@@ -612,6 +705,33 @@ namespace DingoGameObjectsCMSEditorServer.Transport
             {
                 return !string.IsNullOrEmpty(_browserSessionToken) && TokensMatch(cookieToken, _browserSessionToken);
             }
+        }
+
+        private bool IsBearerAuthenticated(HttpListenerRequest request)
+        {
+            var authorization = request.Headers["Authorization"];
+            const string bearerPrefix = "Bearer ";
+            return !string.IsNullOrEmpty(authorization)
+                   && authorization.StartsWith(
+                       bearerPrefix,
+                       StringComparison.OrdinalIgnoreCase)
+                   && TokensMatch(
+                       authorization.Substring(bearerPrefix.Length),
+                       _bearerToken);
+        }
+
+        private bool IsExpectedInstance(HttpListenerRequest request)
+        {
+            return string.IsNullOrEmpty(_instanceToken)
+                   || TokensMatch(
+                       request.Headers[INSTANCE_TOKEN_HEADER],
+                       _instanceToken);
+        }
+
+        private static int GetCurrentProcessId()
+        {
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            return process.Id;
         }
 
         private bool TryBootstrapBrowserSession(string token, out string browserSessionToken)
@@ -794,6 +914,126 @@ namespace DingoGameObjectsCMSEditorServer.Transport
             }
         }
 
+        private bool IsStopping(CancellationToken cancellationToken)
+        {
+            lock (_lifecycleGate)
+            {
+                return cancellationToken.IsCancellationRequested || _disposed;
+            }
+        }
+
+        private void AbortAndCloseListener()
+        {
+            try
+            {
+                _listener.Abort();
+            }
+            catch (Exception exception) when (
+                exception is ObjectDisposedException
+                or InvalidOperationException
+                or HttpListenerException)
+            {
+            }
+
+            try
+            {
+                _listener.Close();
+            }
+            catch (Exception exception) when (
+                exception is ObjectDisposedException
+                or InvalidOperationException
+                or HttpListenerException)
+            {
+            }
+        }
+
+        private static void AbortContext(HttpListenerContext context)
+        {
+            if (context == null)
+            {
+                return;
+            }
+
+            try
+            {
+                context.Response.Abort();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                context.Request.InputStream?.Close();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                context.Response.OutputStream?.Close();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                context.Response.Close();
+            }
+            catch
+            {
+            }
+        }
+
+        private static void CloseCompletedContext(HttpListenerContext context)
+        {
+            if (context == null)
+            {
+                return;
+            }
+
+            try
+            {
+                context.Response.Close();
+            }
+            catch
+            {
+            }
+        }
+
+        private static void WaitForTasks(
+            List<Task> tasks,
+            TimeSpan timeout)
+        {
+            var currentTaskId = Task.CurrentId;
+            var waitableTasks = new List<Task>(tasks.Count);
+            foreach (var task in tasks)
+            {
+                if (task != null
+                    && (!currentTaskId.HasValue || task.Id != currentTaskId.Value))
+                {
+                    waitableTasks.Add(task);
+                }
+            }
+
+            if (waitableTasks.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                Task.WaitAll(waitableTasks.ToArray(), timeout);
+            }
+            catch (AggregateException)
+            {
+                // Shutdown faults are already observed by the tracked tasks;
+                // Dispose only needs their bounded completion.
+            }
+        }
+
         private void ThrowIfDisposed()
         {
             if (_disposed)
@@ -801,6 +1041,18 @@ namespace DingoGameObjectsCMSEditorServer.Transport
                 throw new ObjectDisposedException(nameof(DingoCmsEditorHttpServer));
             }
         }
+
+    }
+
+    class DingoCmsEditorActiveRequest
+    {
+        public DingoCmsEditorActiveRequest(HttpListenerContext context)
+        {
+            Context = context;
+        }
+
+        public HttpListenerContext Context { get; }
+        public Task Task { get; set; }
     }
 }
 #endif

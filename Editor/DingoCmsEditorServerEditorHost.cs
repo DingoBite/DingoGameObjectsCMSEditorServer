@@ -16,7 +16,7 @@ namespace DingoGameObjectsCMSEditorServer.Editor
     {
         private const string PREFS_PREFIX =
             "DingoCMS.EditorServer.";
-        private const string PORT_PREFS_KEY =
+        private const string LEGACY_PORT_PREFS_KEY =
             PREFS_PREFIX + "Port";
         private const string AUTO_START_PREFS_KEY =
             PREFS_PREFIX + "AutoStart";
@@ -59,8 +59,10 @@ namespace DingoGameObjectsCMSEditorServer.Editor
         public static int Port
         {
             get => EditorPrefs.GetInt(
-                PORT_PREFS_KEY,
-                DingoCmsEditorServerOptions.DEFAULT_PORT);
+                PortPrefsKey,
+                EditorPrefs.GetInt(
+                    LEGACY_PORT_PREFS_KEY,
+                    DingoCmsEditorServerOptions.DEFAULT_PORT));
             set
             {
                 if (value == Port)
@@ -74,7 +76,7 @@ namespace DingoGameObjectsCMSEditorServer.Editor
                 var wasRunning = IsRunning;
                 if (wasRunning)
                     DisposeRuntime();
-                EditorPrefs.SetInt(PORT_PREFS_KEY, value);
+                EditorPrefs.SetInt(PortPrefsKey, value);
                 if (wasRunning)
                 {
                     try
@@ -125,56 +127,10 @@ namespace DingoGameObjectsCMSEditorServer.Editor
 
         public static void Start()
         {
-            if (IsRunning)
-            {
-                return;
-            }
-            if (DingoCmsDetachedEditorHost.Mode
-                != DingoCmsEditorHostMode.UnityProcess)
-            {
-                throw new InvalidOperationException(
-                    "Select Unity Process mode before starting the embedded "
-                    + "DingoCMS host.");
-            }
-            RequireDetachedHostReleased(
-                "starting the Unity-process DingoCMS host");
-            if (_compilationInProgress
-                || _assemblyReloading
-                || EditorApplication.isCompiling)
-            {
-                throw new InvalidOperationException(
-                    "DingoCMS Editor Server cannot start while scripts are "
-                    + "compiling or assemblies are reloading.");
-            }
-
-            DisposeRuntime();
-            _lastError = null;
-            try
-            {
-                var options = DingoCmsEditorServerOptions.CreateEnabled(
-                    Port,
-                    EnsureToken(),
-                    authoringOnly: true);
-                _runtime = DingoCmsEditorServerRuntime.Start(
-                    options,
-                    AssetsRoot);
-                SessionState.SetBool(
-                    SESSION_DESIRED_RUNNING_KEY,
-                    true);
-                StopResumePump();
-            }
-            catch (Exception exception)
-            {
-                // The intent flag survives a failed start on purpose. A resume
-                // that loses a race with the closing socket must stay wanted,
-                // or the retry it is running inside would disarm itself on its
-                // first attempt.
-                _lastError = exception.Message;
-                DisposeRuntime();
-                NotifyStateChanged();
-                throw;
-            }
-            NotifyStateChanged();
+            throw new NotSupportedException(
+                "DingoCMS no longer binds its MCP listener inside the Unity "
+                + "process. Start DingoCmsDetachedEditorHost instead; its "
+                + "listener survives compilation and domain reload.");
         }
 
         public static void Stop()
@@ -369,6 +325,8 @@ namespace DingoGameObjectsCMSEditorServer.Editor
                 + $"PID {DingoCmsDetachedEditorHost.ProcessId} remains "
                 + (state == DingoCmsDetachedProcessState.Running
                     ? "owned and running."
+                    : state == DingoCmsDetachedProcessState.BuildRequired
+                        ? "owned but requires a fresh player build."
                     : "retained while ownership verification is pending."));
         }
 
@@ -442,6 +400,14 @@ namespace DingoGameObjectsCMSEditorServer.Editor
         {
             StateChanged?.Invoke();
         }
+
+        private static string PortPrefsKey => PREFS_PREFIX
+                                              + Hash128.Compute(
+                                                  ProjectRoot.Replace(
+                                                      '\\',
+                                                      '/')
+                                                      .ToLowerInvariant())
+                                              + ".Port";
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         private static extern IntPtr SendMessageTimeout(

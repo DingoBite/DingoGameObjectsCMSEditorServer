@@ -4,7 +4,7 @@ using System.Globalization;
 
 namespace DingoGameObjectsCMSEditorServer.Runtime
 {
-    public sealed class DingoCmsEditorServerOptions
+    public class DingoCmsEditorServerOptions
     {
         public const int DEFAULT_PORT = 17844;
         public const string ENABLE_ARGUMENT = "--dingo-cms-editor-server";
@@ -14,12 +14,24 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
         public const string TOKEN_ARGUMENT = "--dingo-cms-editor-token";
         public const string TOKEN_ENVIRONMENT_VARIABLE =
             "DINGO_CMS_EDITOR_TOKEN";
+        public const string INSTANCE_TOKEN_ENVIRONMENT_VARIABLE =
+            "DINGO_CMS_EDITOR_INSTANCE_TOKEN";
+        public const string HOST_STATE_FILE_ENVIRONMENT_VARIABLE =
+            "DINGO_CMS_EDITOR_HOST_STATE_FILE";
+        public const string PROJECT_ID_ENVIRONMENT_VARIABLE =
+            "DINGO_CMS_EDITOR_PROJECT_ID";
+        public const string BUILD_FINGERPRINT_ENVIRONMENT_VARIABLE =
+            "DINGO_CMS_EDITOR_BUILD_FINGERPRINT";
 
         public bool Enabled { get; private set; }
         public bool AuthoringOnly { get; private set; }
         public int Port { get; private set; } = DEFAULT_PORT;
         public string Token { get; private set; }
         public bool GeneratedToken { get; private set; }
+        public string InstanceToken { get; private set; }
+        public string HostStateFile { get; private set; }
+        public string ProjectId { get; private set; }
+        public string BuildFingerprint { get; private set; }
 
         public string BaseUrl => $"http://127.0.0.1:{Port}";
         public string McpUrl => BaseUrl + "/mcp";
@@ -129,7 +141,41 @@ namespace DingoGameObjectsCMSEditorServer.Runtime
                 result.GeneratedToken = true;
             }
 
+            result.InstanceToken = NormalizeOptional(
+                readEnvironmentVariable(INSTANCE_TOKEN_ENVIRONMENT_VARIABLE));
+            result.HostStateFile = NormalizeOptional(
+                readEnvironmentVariable(HOST_STATE_FILE_ENVIRONMENT_VARIABLE));
+            result.ProjectId = NormalizeOptional(
+                readEnvironmentVariable(PROJECT_ID_ENVIRONMENT_VARIABLE));
+            result.BuildFingerprint = NormalizeOptional(
+                readEnvironmentVariable(
+                    BUILD_FINGERPRINT_ENVIRONMENT_VARIABLE));
+            var hasDetachedIdentity = result.InstanceToken != null
+                                      || result.HostStateFile != null
+                                      || result.ProjectId != null
+                                      || result.BuildFingerprint != null;
+            if (hasDetachedIdentity
+                && (result.InstanceToken == null
+                    || result.HostStateFile == null
+                    || result.ProjectId == null
+                    || result.BuildFingerprint == null))
+            {
+                throw new ArgumentException(
+                    $"{INSTANCE_TOKEN_ENVIRONMENT_VARIABLE}, "
+                    + $"{HOST_STATE_FILE_ENVIRONMENT_VARIABLE}, and "
+                    + $"{PROJECT_ID_ENVIRONMENT_VARIABLE}, and "
+                    + $"{BUILD_FINGERPRINT_ENVIRONMENT_VARIABLE} "
+                    + "must be supplied "
+                    + "together for a detached DingoCMS host.");
+            }
+
             return result;
+        }
+
+        private static string NormalizeOptional(string value)
+        {
+            value = value?.Trim();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
         }
 
         private static bool TryReadValue(

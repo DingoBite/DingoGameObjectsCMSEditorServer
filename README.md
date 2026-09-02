@@ -52,23 +52,28 @@ invalid module.
 ## Unity Editor window
 
 Open `Window/DingoCMS/Editor Server` to manage the authoring server without
-entering Play Mode or constructing a gameplay catalog. The default
-`Detached Process` mode launches an authoring-only Windows Player outside the
-Unity process. Its executable path and PID are persisted, so assembly reloads
-and Unity restarts neither kill the server nor make the window lose ownership
-of it. The window can build the Player, select another executable, show its
-log path, and stop only the exact persisted executable/PID pair. If Windows
-cannot temporarily verify that pair, the PID remains visibly retained and all
-start, stop and host-configuration controls stay locked; the window never
-discards an uncertain identity or starts a competing daemon.
+entering Play Mode or constructing a gameplay catalog. The MCP listener always
+runs in an authoring-only Windows Player outside the Unity process. Compilation,
+domain reload, Play Mode and Unity restarts therefore do not close or rebind the
+MCP port. Unity is only the launcher and status client, matching the process
+boundary used by UnityMCP.
 
-`Unity Process` remains available as a compatibility mode. In that mode,
-starting the host is explicit: `Start with Unity Editor` is disabled by default
-and becomes active only after the user opts in. The embedded host stops while
-Unity enters Play Mode and resumes after returning to Edit Mode only when it
-was previously requested. Embedded auto-resume is suppressed whenever Detached
-Process mode is selected or a detached PID is retained. Closing the window does
-not silently stop either kind of running host.
+The launcher records a project-scoped PID, process creation time, executable
+path, port, project id, source-build fingerprint and random per-launch instance
+token in `Library/DingoCmsEditorServer`. A host is reported as running only
+after both the Windows executable identity and an authenticated `/health`
+response match that record. Stop kills only that exact verified process. An
+uncertain identity remains visibly retained and blocks a second daemon.
+`Keep detached server running` restarts a confirmed crashed host with backoff;
+the backoff and stable-health window survive domain reload. It does not bounce a
+healthy host during compilation or reload.
+
+`Build host` writes a companion fingerprint manifest next to the Player. The
+fingerprint covers Player-side DingoCMS source. If that source changes, the
+window marks the still-owned host as requiring a rebuild instead of silently
+accepting an old binary or entering a restart loop. Stop that host, build once,
+and start the fresh Player. The old in-Unity `HttpListener` mode is no longer
+startable.
 
 The `Configure` buttons are also explicit. They update only this project's
 `.codex/config.toml` and `.mcp.json`, preserve unrelated entries and store a

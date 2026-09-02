@@ -144,7 +144,7 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
         public async Task DisposeReleasesPortWithKeepAliveClient()
         {
             var port = ReserveLoopbackPort();
-            var first = new DingoCmsEditorHttpServer(
+            using var first = new DingoCmsEditorHttpServer(
                 new DingoCmsEditorTestRouter(),
                 port,
                 TOKEN);
@@ -166,6 +166,191 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
                 TOKEN);
             Assert.DoesNotThrow(restarted.Start);
             Assert.That(restarted.IsRunning, Is.True);
+        }
+
+        [Test]
+        public async Task RepeatedStartDisposeRebindsSamePortAndAnswersPing()
+        {
+            var port = ReserveLoopbackPort();
+
+            for (var cycle = 0; cycle < 8; cycle++)
+            {
+                var server = new DingoCmsEditorHttpServer(
+                    new DingoCmsEditorTestRouter(),
+                    port,
+                    TOKEN);
+                try
+                {
+                    server.Start();
+                    server.Start();
+                    Assert.That(server.IsRunning, Is.True, $"cycle {cycle}");
+
+                    using var client = CreateClient();
+                    using var response = await SendMcpAsync(
+                        client,
+                        server,
+                        PingRequest(cycle),
+                        TOKEN,
+                        null);
+                    Assert.That(
+                        response.StatusCode,
+                        Is.EqualTo(HttpStatusCode.OK),
+                        $"cycle {cycle}");
+                    var body = JObject.Parse(
+                        await response.Content.ReadAsStringAsync());
+                    Assert.That(
+                        body["result"],
+                        Is.TypeOf<JObject>(),
+                        $"cycle {cycle}");
+                }
+                finally
+                {
+                    server.Dispose();
+                    server.Dispose();
+                }
+
+                Assert.That(server.IsRunning, Is.False, $"cycle {cycle}");
+            }
+        }
+
+        [Test]
+        public async Task DisposeClosesPartialRequestAndImmediatelyRebindsPort()
+        {
+            var port = ReserveLoopbackPort();
+            using var first = new DingoCmsEditorHttpServer(
+                new DingoCmsEditorTestRouter(),
+                port,
+                TOKEN);
+            first.Start();
+
+            using var partialClient = new TcpClient();
+            await partialClient.ConnectAsync(IPAddress.Loopback, port);
+            using var partialStream = partialClient.GetStream();
+            var partialRequest = Encoding.ASCII.GetBytes(
+                "POST /mcp HTTP/1.1\r\n"
+                + $"Host: 127.0.0.1:{port}\r\n"
+                + $"Authorization: Bearer {TOKEN}\r\n"
+                + "Content-Type: application/json\r\n"
+                + "Content-Length: 1024\r\n"
+                + "Connection: keep-alive\r\n\r\n"
+                + "{");
+            await partialStream.WriteAsync(
+                partialRequest,
+                0,
+                partialRequest.Length);
+            await partialStream.FlushAsync();
+
+            // Give HttpListener time to publish the accepted context while
+            // deliberately leaving the declared request body incomplete.
+            await Task.Delay(50);
+            first.Dispose();
+            Assert.That(first.IsRunning, Is.False);
+
+            using var restarted = new DingoCmsEditorHttpServer(
+                new DingoCmsEditorTestRouter(),
+                port,
+                TOKEN);
+            Assert.DoesNotThrow(restarted.Start);
+            using var client = CreateClient();
+            using var response = await SendMcpAsync(
+                client,
+                restarted,
+                PingRequest(1),
+                TOKEN,
+                null);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        }
+
+        [Test]
+        public void StartAndDisposeAreIdempotentAndStartAfterDisposeThrows()
+        {
+            using var server = new DingoCmsEditorHttpServer(
+                new DingoCmsEditorTestRouter(),
+                ReserveLoopbackPort(),
+                TOKEN);
+
+            Assert.DoesNotThrow(server.Start);
+            Assert.DoesNotThrow(server.Start);
+            Assert.That(server.IsRunning, Is.True);
+
+            Assert.DoesNotThrow(server.Dispose);
+            Assert.DoesNotThrow(server.Dispose);
+            Assert.That(server.IsRunning, Is.False);
+            Assert.Throws<ObjectDisposedException>(server.Start);
+        }
+
+        [Test]
+        public async Task HealthRequiresBearerAndExactInstanceToken()
+        {
+            const string instanceToken = "test-instance-token";
+            const string buildFingerprint = "test-build-fingerprint";
+            using var server = new DingoCmsEditorHttpServer(
+                new DingoCmsEditorTestRouter(),
+                ReserveLoopbackPort(),
+                TOKEN,
+                instanceToken,
+                buildFingerprint);
+            server.Start();
+            using var client = CreateClient();
+
+            using var unauthenticated = await client.GetAsync(
+                server.Origin + "/health");
+            Assert.That(
+                unauthenticated.StatusCode,
+                Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            using var bearerOnlyRequest = new HttpRequestMessage(
+                HttpMethod.Get,
+                server.Origin + "/health");
+            bearerOnlyRequest.Headers.TryAddWithoutValidation(
+                "Authorization",
+                "Bearer " + TOKEN);
+            using var bearerOnly = await client.SendAsync(bearerOnlyRequest);
+            Assert.That(
+                bearerOnly.StatusCode,
+                Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            using var wrongInstanceRequest = new HttpRequestMessage(
+                HttpMethod.Get,
+                server.Origin + "/health");
+            wrongInstanceRequest.Headers.TryAddWithoutValidation(
+                "Authorization",
+                "Bearer " + TOKEN);
+            wrongInstanceRequest.Headers.TryAddWithoutValidation(
+                "X-DingoCMS-Instance-Token",
+                "wrong-instance");
+            using var wrongInstance = await client.SendAsync(
+                wrongInstanceRequest);
+            Assert.That(
+                wrongInstance.StatusCode,
+                Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            using var healthRequest = new HttpRequestMessage(
+                HttpMethod.Get,
+                server.Origin + "/health");
+            healthRequest.Headers.TryAddWithoutValidation(
+                "Authorization",
+                "Bearer " + TOKEN);
+            healthRequest.Headers.TryAddWithoutValidation(
+                "X-DingoCMS-Instance-Token",
+                instanceToken);
+            using var healthResponse = await client.SendAsync(healthRequest);
+            var health = JObject.Parse(
+                await healthResponse.Content.ReadAsStringAsync());
+
+            Assert.That(healthResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(health.Value<bool>("ok"), Is.True);
+            Assert.That(
+                health.Value<int>("processId"),
+                Is.EqualTo(System.Diagnostics.Process.GetCurrentProcess().Id));
+            Assert.That(health.Value<int>("port"), Is.EqualTo(server.Port));
+            Assert.That(
+                health.Value<string>("instanceToken"),
+                Is.EqualTo(instanceToken));
+            Assert.That(health.Value<string>("serverVersion"), Is.Not.Empty);
+            Assert.That(
+                health.Value<string>("buildFingerprint"),
+                Is.EqualTo(buildFingerprint));
         }
 
         [Test]
@@ -213,6 +398,94 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
                 {
                     Directory.Delete(root, recursive: true);
                 }
+            }
+        }
+
+        [Test]
+        public void FailedRuntimeStartPreservesDetachedOwnershipIdentity()
+        {
+            var root = Path.Combine(
+                Path.GetTempPath(),
+                "DingoCmsRuntimeIdentityTests",
+                Guid.NewGuid().ToString("N"));
+            var assetsRoot = Path.Combine(root, "assets");
+            var statePath = Path.Combine(root, "detached-host.json");
+            Directory.CreateDirectory(assetsRoot);
+            var blockedPort = ReserveLoopbackPort();
+            var instanceToken = Guid.NewGuid().ToString("N");
+            const string projectId = "runtime-start-failure-test";
+            const string buildFingerprint = "runtime-build-fingerprint";
+            using var currentProcess = System.Diagnostics.Process
+                .GetCurrentProcess();
+            var executablePath = currentProcess.MainModule?.FileName
+                                 ?? Environment.GetCommandLineArgs()[0];
+            var identity = new DingoCmsEditorHostIdentity(
+                currentProcess.Id,
+                blockedPort,
+                projectId,
+                instanceToken,
+                executablePath,
+                currentProcess.StartTime.ToUniversalTime().Ticks,
+                buildFingerprint: buildFingerprint);
+            DingoCmsEditorHostIdentity.WriteAtomic(statePath, identity);
+            var environment = new System.Collections.Generic
+                .Dictionary<string, string>
+                {
+                    [DingoCmsEditorServerOptions
+                        .INSTANCE_TOKEN_ENVIRONMENT_VARIABLE] = instanceToken,
+                    [DingoCmsEditorServerOptions
+                        .HOST_STATE_FILE_ENVIRONMENT_VARIABLE] = statePath,
+                    [DingoCmsEditorServerOptions
+                        .PROJECT_ID_ENVIRONMENT_VARIABLE] = projectId,
+                    [DingoCmsEditorServerOptions
+                        .BUILD_FINGERPRINT_ENVIRONMENT_VARIABLE] =
+                        buildFingerprint,
+                };
+            var options = DingoCmsEditorServerOptions.Parse(
+                new[]
+                {
+                    DingoCmsEditorServerOptions.ENABLE_ARGUMENT,
+                    DingoCmsEditorServerOptions.AUTHORING_ONLY_ARGUMENT,
+                    DingoCmsEditorServerOptions.PORT_ARGUMENT
+                    + "=" + blockedPort,
+                    DingoCmsEditorServerOptions.TOKEN_ARGUMENT,
+                    TOKEN,
+                },
+                name => environment.TryGetValue(name, out var value)
+                    ? value
+                    : null);
+            using var blocker = new DingoCmsEditorHttpServer(
+                new DingoCmsEditorTestRouter(),
+                blockedPort,
+                TOKEN);
+
+            try
+            {
+                blocker.Start();
+                Assert.Catch<Exception>(() =>
+                    DingoCmsEditorServerRuntime.Start(
+                        options,
+                        assetsRoot));
+
+                Assert.That(
+                    DingoCmsEditorHostIdentity.TryRead(
+                        statePath,
+                        out var retained),
+                    Is.True);
+                Assert.That(retained.ProcessId, Is.EqualTo(identity.ProcessId));
+                Assert.That(
+                    retained.InstanceToken,
+                    Is.EqualTo(identity.InstanceToken));
+            }
+            finally
+            {
+                blocker.Dispose();
+                DingoCmsEditorHostIdentity.DeleteIfOwned(
+                    statePath,
+                    identity.ProcessId,
+                    identity.InstanceToken);
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
             }
         }
 
@@ -320,6 +593,16 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
             };
         }
 
+        private static JObject PingRequest(int id)
+        {
+            return new JObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["id"] = id,
+                ["method"] = "ping",
+            };
+        }
+
         private static async Task<HttpResponseMessage> SendMcpAsync(HttpClient client, DingoCmsEditorHttpServer server, JObject body, string token, string origin)
         {
             var request = new HttpRequestMessage(HttpMethod.Post, server.Origin + "/mcp")
@@ -354,11 +637,28 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
 
         private static int ReserveLoopbackPort()
         {
-            var listener = new TcpListener(IPAddress.Loopback, 0);
-            listener.Start();
-            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            listener.Stop();
-            return port;
+            SocketException lastError = null;
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                var listener = new TcpListener(IPAddress.Loopback, 0);
+                try
+                {
+                    listener.Start();
+                    return ((IPEndPoint)listener.LocalEndpoint).Port;
+                }
+                catch (SocketException exception)
+                {
+                    lastError = exception;
+                }
+                finally
+                {
+                    listener.Stop();
+                }
+            }
+            throw new InvalidOperationException(
+                "Windows did not provide a free loopback test port after "
+                + "ten attempts.",
+                lastError);
         }
     }
 

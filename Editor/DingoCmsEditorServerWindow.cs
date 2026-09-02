@@ -19,7 +19,6 @@ namespace DingoGameObjectsCMSEditorServer.Editor
         private Label _tokenHint;
         private Label _hostDetail;
         private IntegerField _portField;
-        private EnumField _hostModeField;
         private TextField _detachedExecutableField;
         private TextField _tokenField;
         private Button _serverToggleButton;
@@ -103,21 +102,12 @@ namespace DingoGameObjectsCMSEditorServer.Editor
 
             var serverCard = CreateCard(
                 "SERVER",
-                "Detached mode runs authoring in its own hidden player process. It survives domain reloads, Play Mode and Unity restarts; the tracked PID keeps Stop safe and exact.");
+                "The MCP listener runs in its own hidden player process. Unity compilation and domain reload only reload the editor client; the server process and its port remain alive.");
             scroll.Add(serverCard);
 
             serverCard.Add(CreateReadOnlyField(
                 "Assets root",
                 DingoCmsEditorServerEditorHost.AssetsRoot));
-
-            _hostModeField = new EnumField(
-                "Host mode",
-                DingoCmsDetachedEditorHost.Mode);
-            _hostModeField.AddToClassList("form-field");
-            _hostModeField.RegisterValueChangedCallback(change => RunAction(
-                () => DingoCmsDetachedEditorHost.Mode =
-                    (DingoCmsEditorHostMode)change.newValue));
-            serverCard.Add(_hostModeField);
 
             var executableRow = new VisualElement();
             executableRow.AddToClassList("executable-row");
@@ -190,12 +180,12 @@ namespace DingoGameObjectsCMSEditorServer.Editor
             serverCard.Add(_tokenHint);
 
             _autoStartToggle = new Toggle(
-                "Start with Unity Editor (Edit Mode only)");
+                "Keep detached server running");
             _autoStartToggle.AddToClassList("auto-start");
             _autoStartToggle.tooltip =
-                "Off by default. Enabling this affects the next Unity Editor session; it never enables a gameplay feature.";
+                "Restarts the verified detached host after a crash or Editor restart. Compilation and domain reload do not restart it.";
             _autoStartToggle.RegisterValueChangedCallback(change =>
-                DingoCmsEditorServerEditorHost.AutoStart = change.newValue);
+                DingoCmsDetachedEditorHost.KeepRunning = change.newValue);
             serverCard.Add(_autoStartToggle);
 
             var actionRail = new VisualElement();
@@ -278,23 +268,26 @@ namespace DingoGameObjectsCMSEditorServer.Editor
                 return;
             }
 
-            var detachedMode = DingoCmsDetachedEditorHost.Mode
-                               == DingoCmsEditorHostMode.DetachedProcess;
             var detachedState = DingoCmsDetachedEditorHost.ProcessState;
             var detachedRunning = detachedState
                                   == DingoCmsDetachedProcessState.Running;
+            var detachedBuildRequired = detachedState
+                                        == DingoCmsDetachedProcessState
+                                            .BuildRequired;
             var detachedIdentityRetained = detachedState
                                            != DingoCmsDetachedProcessState.Stopped;
-            var unityRunning = DingoCmsEditorServerEditorHost.IsRunning;
-            var running = detachedRunning || unityRunning;
-            var hostOccupied = detachedIdentityRetained || unityRunning;
+            var buildCurrent = DingoCmsDetachedEditorHost.BuildIsCurrent;
+            var running = detachedRunning;
+            var hostOccupied = detachedIdentityRetained;
             _serverStatus.text = detachedRunning
                 ? $"●  DETACHED · {DingoCmsDetachedEditorHost.ProcessId} · VERIFIED"
+                : detachedBuildRequired
+                    ? $"!  DETACHED · {DingoCmsDetachedEditorHost.ProcessId} · REBUILD"
                 : detachedIdentityRetained
                     ? $"◐  DETACHED · {DingoCmsDetachedEditorHost.ProcessId} · VERIFYING"
-                : unityRunning
-                    ? "●  UNITY PROCESS"
-                    : "○  STOPPED";
+                : buildCurrent
+                    ? "○  STOPPED"
+                    : "○  STOPPED · BUILD REQUIRED";
             _serverStatus.EnableInClassList(
                 "status-running",
                 running);
@@ -305,34 +298,30 @@ namespace DingoGameObjectsCMSEditorServer.Editor
                 "status-stopped",
                 !hostOccupied);
 
-            _hostModeField.SetValueWithoutNotify(
-                DingoCmsDetachedEditorHost.Mode);
-            _hostModeField.SetEnabled(!hostOccupied);
             _detachedExecutableField.SetValueWithoutNotify(
                 DingoCmsDetachedEditorHost.ExecutablePath);
             _detachedExecutableField.SetEnabled(
-                detachedMode && !hostOccupied);
+                !hostOccupied);
             _browseExecutableButton.SetEnabled(
-                detachedMode && !hostOccupied);
+                !hostOccupied);
             _buildDetachedHostButton.SetEnabled(
-                detachedMode && !hostOccupied);
-            _hostDetail.text = detachedMode
-                ? detachedRunning
-                    ? $"Owned PID {DingoCmsDetachedEditorHost.ProcessId} · executable verified · log: "
-                      + DingoCmsDetachedEditorHost.LogPath
-                    : detachedIdentityRetained
-                        ? $"PID {DingoCmsDetachedEditorHost.ProcessId} is retained, but executable ownership could not be verified on this poll. Start, Stop and host configuration stay locked."
-                    : "Detached host is independent from Unity. Build or "
-                      + "select a player, then start it once."
-                : "Legacy in-process mode stops for compilation and exits "
-                  + "with Unity.";
+                !hostOccupied);
+            _hostDetail.text = detachedRunning
+                ? $"Owned PID {DingoCmsDetachedEditorHost.ProcessId} · executable, build fingerprint and health identity verified · log: "
+                  + DingoCmsDetachedEditorHost.LogPath
+                : detachedBuildRequired
+                    ? $"Owned PID {DingoCmsDetachedEditorHost.ProcessId} uses an older DingoCMS build. Stop it, then use Build host."
+                : detachedIdentityRetained
+                    ? $"PID {DingoCmsDetachedEditorHost.ProcessId} is retained while its executable and health identity are being verified. Start, Stop and host configuration stay locked."
+                    : "The detached host is independent from Unity. Build or "
+                      + "select a player, then start it once.";
 
             _portField.SetValueWithoutNotify(
                 DingoCmsEditorServerEditorHost.Port);
             _portField.SetEnabled(!hostOccupied);
             _autoStartToggle.SetValueWithoutNotify(
-                DingoCmsEditorServerEditorHost.AutoStart);
-            _autoStartToggle.SetEnabled(!detachedMode && !hostOccupied);
+                DingoCmsDetachedEditorHost.KeepRunning);
+            _autoStartToggle.SetEnabled(true);
 
             var token = DingoCmsEditorServerEditorHost.Token;
             _tokenField.SetValueWithoutNotify(token ?? string.Empty);
@@ -352,35 +341,40 @@ namespace DingoGameObjectsCMSEditorServer.Editor
 
             _serverToggleButton.text = detachedIdentityRetained
                                        && !detachedRunning
+                                       && !detachedBuildRequired
                 ? "Ownership check pending"
+                : detachedBuildRequired
+                    ? "Stop stale host"
                 : running
-                ? detachedRunning
-                    ? "Stop detached host"
-                    : "Stop Unity host"
-                : detachedMode
+                ? "Stop detached host"
+                : buildCurrent
                     ? "Start detached host"
-                    : "Start Unity host";
+                    : "Build host required";
             _serverToggleButton.EnableInClassList(
                 "danger-button",
-                running);
+                running || detachedBuildRequired);
             _serverToggleButton.SetEnabled(
-                !detachedIdentityRetained || detachedRunning);
+                detachedRunning
+                || detachedBuildRequired
+                || (!detachedIdentityRetained && buildCurrent));
             _openWebButton.SetEnabled(running);
             _copyMcpButton.SetEnabled(true);
 
             var message = _actionError
                           ?? DingoCmsDetachedEditorHost.LastError
-                          ?? DingoCmsEditorServerEditorHost.LastError;
+                          ?? DingoCmsEditorServerEditorHost.LastError
+                          ?? (buildCurrent
+                              ? null
+                              : DingoCmsDetachedEditorHost
+                                  .BuildValidationError);
             _serverMessage.text = !string.IsNullOrWhiteSpace(message)
                 ? message
                 : detachedIdentityRetained && !detachedRunning
                     ? $"PID {DingoCmsDetachedEditorHost.ProcessId} remains retained. DingoCMS will not start a duplicate or discard ownership until that exact executable is verified or is confirmed gone."
                 : running
                     ? $"Listening at {DingoCmsEditorServerEditorHost.McpUrl}"
-                    : detachedMode
-                        ? "Ready. The detached host remains alive when Unity "
-                          + "restarts."
-                        : "Ready. Starting the server does not start the game.";
+                    : "Ready. The detached host remains alive through Unity "
+                      + "compilation, domain reload and restart.";
             _serverMessage.EnableInClassList(
                 "message-error",
                 !string.IsNullOrWhiteSpace(message));
@@ -493,22 +487,15 @@ namespace DingoGameObjectsCMSEditorServer.Editor
         {
             RunAction(() =>
             {
-                if (DingoCmsDetachedEditorHost.IsRunning)
+                var state = DingoCmsDetachedEditorHost.ProcessState;
+                if (state == DingoCmsDetachedProcessState.Running
+                    || state == DingoCmsDetachedProcessState.BuildRequired)
                 {
                     DingoCmsDetachedEditorHost.Stop();
                 }
-                else if (DingoCmsEditorServerEditorHost.IsRunning)
-                {
-                    DingoCmsEditorServerEditorHost.Stop();
-                }
-                else if (DingoCmsDetachedEditorHost.Mode
-                         == DingoCmsEditorHostMode.DetachedProcess)
-                {
-                    DingoCmsDetachedEditorHost.Start();
-                }
                 else
                 {
-                    DingoCmsEditorServerEditorHost.Start();
+                    DingoCmsDetachedEditorHost.Start();
                 }
             });
         }
@@ -544,12 +531,7 @@ namespace DingoGameObjectsCMSEditorServer.Editor
 
         private static void OpenWebEditor()
         {
-            if (DingoCmsDetachedEditorHost.IsRunning)
-            {
-                DingoCmsDetachedEditorHost.OpenWebEditor();
-                return;
-            }
-            DingoCmsEditorServerEditorHost.OpenWebEditor();
+            DingoCmsDetachedEditorHost.OpenWebEditor();
         }
 
         private void RunAction(Action action)
