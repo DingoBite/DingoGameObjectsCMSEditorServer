@@ -136,6 +136,30 @@ namespace DingoGameObjectsCMSEditorServer.Editor
             return StopConnectionAsync();
         }
 
+        public static T UseLocalAuthoring<T>(Func<Func<string, JObject, JObject>, T> action)
+        {
+            DingoCmsAuthoringApplication authoring;
+            lock (Sync)
+            {
+                authoring = _authoring;
+            }
+
+            if (authoring != null)
+            {
+                return action(authoring.Execute);
+            }
+
+            var temporary = new DingoCmsAuthoringApplication(DingoCmsEditorServerSettings.AssetsRoot);
+            try
+            {
+                return action(temporary.Execute);
+            }
+            finally
+            {
+                temporary.Shutdown();
+            }
+        }
+
         public static async Task OpenWebEditorAsync()
         {
             string instance;
