@@ -48,7 +48,11 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
             {
                 return;
             }
-            Statuses[source.GetEntityId()] = new BakeStatus(message, type);
+            var id = source.GetEntityId();
+            var changed = !Statuses.TryGetValue(id, out var previous) || previous.Message != message || previous.Type != type;
+            Statuses[id] = new BakeStatus(message, type);
+            if (changed && type == MessageType.Error)
+                Debug.LogError($"[GA authoring] {source.name}: {message}", source);
         }
 
         public static bool IsEditableRoot(GameAssetObjectAuthoring source)
@@ -59,7 +63,7 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
             }
             if (EditorUtility.IsPersistent(source))
             {
-                return AssetDatabase.GetAssetPath(source).EndsWith(".prefab", System.StringComparison.OrdinalIgnoreCase);
+                return AssetDatabase.GetAssetPath(source).EndsWith(".prefab", System.StringComparison.OrdinalIgnoreCase) && AssetDatabase.CanOpenForEdit(source);
             }
 
             var scene = source.gameObject.scene;
@@ -69,10 +73,24 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
             }
             if (!EditorSceneManager.IsPreviewScene(scene))
             {
-                return true;
+                return string.IsNullOrEmpty(scene.path) || AssetDatabase.CanOpenForEdit(scene.path);
             }
             var stage = PrefabStageUtility.GetCurrentPrefabStage();
-            return stage != null && stage.scene == scene && stage.prefabContentsRoot != null && (source.gameObject == stage.prefabContentsRoot || source.transform.IsChildOf(stage.prefabContentsRoot.transform));
+            return stage != null && stage.scene == scene && stage.prefabContentsRoot != null && AssetDatabase.CanOpenForEdit(stage.assetPath) && (source.gameObject == stage.prefabContentsRoot || source.transform.IsChildOf(stage.prefabContentsRoot.transform));
+        }
+
+        public static bool IsPlacedPrefabInstance(GameAssetObjectAuthoring source)
+        {
+            if (source == null || !PrefabUtility.IsPartOfPrefabInstance(source))
+                return false;
+            if (EditorUtility.IsPersistent(source))
+            {
+                var instanceRoot = PrefabUtility.GetNearestPrefabInstanceRoot(source.gameObject);
+                return instanceRoot != null && instanceRoot.transform.parent != null;
+            }
+
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            return stage == null || source.gameObject != stage.prefabContentsRoot;
         }
 
         private static void Queue(GameAssetObjectAuthoring source)
@@ -139,7 +157,7 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
                     Pending[source.GetEntityId()] = new PendingBake(source, now + BAKE_DELAY_SECONDS);
                 }
             }
-            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating || DingoCmsEditorSessionClient.IsConnecting)
             {
                 return;
             }
@@ -157,7 +175,7 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
                 var id = Ready[i];
                 var source = Pending[id].Source;
                 Pending.Remove(id);
-                if (!IsEditableRoot(source) || !source.AutoBake || !source.HasAsset || PrefabUtility.IsPartOfPrefabInstance(source))
+                if (!IsEditableRoot(source) || !source.AutoBake || !source.HasAsset || IsPlacedPrefabInstance(source))
                 {
                     continue;
                 }

@@ -28,13 +28,18 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
             }
             serializedObject.ApplyModifiedProperties();
 
-            var prefabInstance = PrefabUtility.IsPartOfPrefabInstance(authoring);
+            var prefabInstance = GameAssetObjectAuthoringAutoBake.IsPlacedPrefabInstance(authoring);
+            var editableSource = GameAssetObjectAuthoringAutoBake.IsEditableRoot(authoring);
             EditorGUILayout.HelpBox("GA is saved in the mounted DingoCMS library. Choose its module in Key.Mod and optionally set a path within that module.", MessageType.Info);
             if (prefabInstance)
             {
-                EditorGUILayout.HelpBox("Edit the prefab source to author its shared GameAsset. Prefab instances cannot bake a separate definition.", MessageType.Warning);
+                EditorGUILayout.HelpBox("Edit the prefab asset or its Prefab Stage root. Placed prefab instances cannot bake a separate definition.", MessageType.Warning);
             }
-            using (new EditorGUI.DisabledScope(prefabInstance))
+            else if (!editableSource)
+            {
+                EditorGUILayout.HelpBox("The Unity source is read-only. GameAsset authoring is unavailable in this Editor.", MessageType.Info);
+            }
+            using (new EditorGUI.DisabledScope(prefabInstance || !editableSource))
             {
                 if (!authoring.HasAsset && GUILayout.Button("Create GA"))
                 {
@@ -53,7 +58,7 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
 
         public static bool Save(GameAssetObjectAuthoring authoring, bool create)
         {
-            if (PrefabUtility.IsPartOfPrefabInstance(authoring))
+            if (GameAssetObjectAuthoringAutoBake.IsPlacedPrefabInstance(authoring))
             {
                 GameAssetObjectAuthoringAutoBake.SetStatus(authoring, "Edit the prefab source before baking its GameAsset.", MessageType.Error);
                 return false;
@@ -68,7 +73,16 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
                 GameAssetObjectAuthoringAutoBake.SetStatus(authoring, sourceError, MessageType.Error);
                 return false;
             }
-            if (!create && authoring.AuthoringSourceId != sourceId)
+            if (create)
+            {
+                var stage = PrefabStageUtility.GetCurrentPrefabStage();
+                if (stage != null && stage.scene == authoring.gameObject.scene && stage.scene.isDirty)
+                {
+                    GameAssetObjectAuthoringAutoBake.SetStatus(authoring, "Save the prefab before creating its GameAsset.", MessageType.Error);
+                    return false;
+                }
+            }
+            if (!create && !IsSameSource(authoring.AuthoringSourceId, sourceId))
             {
                 GameAssetObjectAuthoringAutoBake.SetStatus(authoring, "This GameAsset link belongs to another scene or prefab object. Its copied authoring root cannot bake the same GA.", MessageType.Error);
                 return false;
@@ -109,9 +123,14 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
             {
                 return;
             }
-            if (PrefabUtility.IsPartOfPrefabInstance(authoring))
+            if (GameAssetObjectAuthoringAutoBake.IsPlacedPrefabInstance(authoring))
             {
                 GameAssetObjectAuthoringAutoBake.SetStatus(authoring, "Edit the prefab source before resetting its GameAsset link.", MessageType.Error);
+                return;
+            }
+            if (!GameAssetObjectAuthoringAutoBake.IsEditableRoot(authoring))
+            {
+                GameAssetObjectAuthoringAutoBake.SetStatus(authoring, "The GameAsset authoring source is not editable.", MessageType.Error);
                 return;
             }
             if (string.IsNullOrEmpty(authoring.AssetGuid) && string.IsNullOrEmpty(authoring.DocumentSha256))
@@ -129,7 +148,7 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
             {
                 return;
             }
-            if (PrefabUtility.IsPartOfPrefabInstance(authoring))
+            if (GameAssetObjectAuthoringAutoBake.IsPlacedPrefabInstance(authoring))
             {
                 GameAssetObjectAuthoringAutoBake.SetStatus(authoring, "Edit the prefab source before deleting its GameAsset.", MessageType.Error);
                 return;
@@ -139,7 +158,7 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
                 GameAssetObjectAuthoringAutoBake.SetStatus(authoring, "The authoring component has no complete saved GameAsset link.", MessageType.Error);
                 return;
             }
-            if (!TryGetSourceId(authoring, out var sourceId, out var sourceError) || authoring.AuthoringSourceId != sourceId)
+            if (!TryGetSourceId(authoring, out var sourceId, out var sourceError) || !IsSameSource(authoring.AuthoringSourceId, sourceId))
             {
                 GameAssetObjectAuthoringAutoBake.SetStatus(authoring, sourceError ?? "This copied authoring root does not own the linked GameAsset.", MessageType.Error);
                 return;
@@ -180,6 +199,15 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
             GameAssetObjectAuthoringAutoBake.SetStatus(authoring, status, MessageType.Info);
         }
 
+        private static bool IsSameSource(string linkedSourceId, string sourceId)
+        {
+            if (linkedSourceId == sourceId)
+                return true;
+            if (string.IsNullOrEmpty(linkedSourceId) || !GlobalObjectId.TryParse(linkedSourceId, out var linkedId) || !GlobalObjectId.TryParse(sourceId, out var currentId))
+                return false;
+            return linkedId.identifierType == 2 && currentId.identifierType == 1 && linkedId.assetGUID.Equals(currentId.assetGUID) && linkedId.targetObjectId == currentId.targetObjectId && linkedId.targetPrefabId == currentId.targetPrefabId;
+        }
+
         private static bool TryGetSourceId(GameAssetObjectAuthoring authoring, out string sourceId, out string error)
         {
             sourceId = null;
@@ -190,7 +218,10 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
                 return false;
             }
 
-            if (EditorUtility.IsPersistent(authoring))
+            var persistent = EditorUtility.IsPersistent(authoring);
+            var stage = persistent ? null : PrefabStageUtility.GetCurrentPrefabStage();
+            var inPrefabStage = stage != null && stage.scene == authoring.gameObject.scene && stage.prefabContentsRoot != null;
+            if (persistent)
             {
                 if (string.IsNullOrWhiteSpace(AssetDatabase.GetAssetPath(authoring)))
                 {
@@ -198,23 +229,58 @@ namespace DingoGameObjectsCMSEditorServer.Editor.Authoring
                     return false;
                 }
             }
-            else
+            else if (!inPrefabStage)
             {
-                var stage = PrefabStageUtility.GetCurrentPrefabStage();
-                var prefabStageRoot = stage != null && stage.scene == authoring.gameObject.scene && stage.prefabContentsRoot != null;
-                if (!prefabStageRoot && string.IsNullOrWhiteSpace(authoring.gameObject.scene.path))
+                if (string.IsNullOrWhiteSpace(authoring.gameObject.scene.path))
                 {
                     error = "Save the scene before creating its GameAsset, so the authoring source keeps a stable identity.";
                     return false;
                 }
             }
             var globalId = GlobalObjectId.GetGlobalObjectIdSlow(authoring);
-            sourceId = globalId.ToString();
             if (globalId.assetGUID.Equals(default(GUID)))
             {
                 error = "Unity did not provide a stable scene or prefab object identity. Save the source and try again.";
                 return false;
             }
+            if (inPrefabStage)
+            {
+                var assetGuid = AssetDatabase.GUIDFromAssetPath(stage.assetPath);
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(stage.assetPath);
+                if (assetGuid.Equals(default(GUID)) || !globalId.assetGUID.Equals(assetGuid) || prefab == null)
+                {
+                    error = "Save the prefab before creating or baking its GameAsset.";
+                    return false;
+                }
+
+                var stageSource = PrefabUtility.GetCorrespondingObjectFromSource(authoring);
+                var sources = prefab.GetComponentsInChildren<GameAssetObjectAuthoring>(true);
+                for (var i = 0; i < sources.Length; i++)
+                {
+                    var candidateId = GlobalObjectId.GetGlobalObjectIdSlow(sources[i]);
+                    if (candidateId.identifierType != 1 || !candidateId.assetGUID.Equals(assetGuid))
+                        continue;
+                    var sameObjectId = candidateId.targetObjectId == globalId.targetObjectId && candidateId.targetPrefabId == globalId.targetPrefabId;
+                    // An inherited Variant root has a Stage instance ID; its saved root shares the same immediate source.
+                    var sameVariantRoot = authoring.gameObject == stage.prefabContentsRoot && sources[i].gameObject == prefab && EditorUtility.IsPersistent(sources[i]) && AssetDatabase.GetAssetPath(sources[i]) == stage.assetPath && stageSource != null && stageSource == PrefabUtility.GetCorrespondingObjectFromSource(sources[i]);
+                    if (!sameObjectId && !sameVariantRoot)
+                        continue;
+                    if (sourceId != null)
+                    {
+                        error = "The prefab contains more than one GameAsset authoring source with the same identity.";
+                        return false;
+                    }
+                    sourceId = candidateId.ToString();
+                }
+                if (sourceId == null)
+                {
+                    error = "Save the prefab before creating or baking its GameAsset.";
+                    return false;
+                }
+                return true;
+            }
+
+            sourceId = globalId.ToString();
             return true;
         }
     }
