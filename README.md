@@ -169,6 +169,25 @@ once - drive the changeset directly:
 5. Run `changeset_validate`.
 6. Commit explicitly, or abort.
 
+## Native prefab authoring and JSON publication
+
+`modules_list` includes `assetContentHash` and `dependsOn` from the same scanned
+module revision. Use `contentHash` to guard a transaction and `assetContentHash`
+to pin another module in `dependency.json`; the two hashes serve different
+purposes. Dependency metadata can be updated through a validated changeset
+using `putResource`, preserving all other declared dependencies.
+
+Native prefab definitions use `DingoGameObjectsCMS.AssetObjects.Authoring.GameAssetAuthoring`
+and the CMS Inspector, converter discovery, generated prefab index and instance
+overrides. Their prefab is the authored source; they do not publish a parallel
+JSON document. The removed `GameAssetObjectAuthoring` auto-bake and Inspector
+hooks must not be registered against the native workflow.
+
+`Editor.Authoring.GameAssetObjectAuthoringPublisher` remains an independent
+transactional JSON-module API. It supports create, bake and delete through the
+authoring executor, preserves asset identity, and rejects stale document hashes.
+It does not depend on a prefab component or install automatic asset-save hooks.
+
 ## Web editor
 
 The Web UI is the single-document path and exposes no changeset controls.

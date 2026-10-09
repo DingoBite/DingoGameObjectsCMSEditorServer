@@ -11,6 +11,49 @@ namespace DingoGameObjectsCMSEditorServer.Tests.Editor
     public class DingoCmsAuthoringApplicationTests
     {
         [Test]
+        public void ModuleListingDistinguishesTransactionHashFromDependencyPinAfterMetadataCommit()
+        {
+            var environment = CreateEnvironment();
+            DingoCmsAuthoringApplication application = null;
+            try
+            {
+                application = new DingoCmsAuthoringApplication(environment.AssetsRoot);
+                var hash = CreateAndCommitTestAsset(application);
+                var before = RequireResult(application.Execute("modules_list", new JObject()))["modules"][0];
+                var pin = before.Value<string>("assetContentHash");
+                Assert.That(pin, Is.Not.Empty);
+                Assert.That(before["dependsOn"], Is.Empty);
+                var dependency = new JObject
+                {
+                    ["Mod"] = "base", ["ContentHash"] = new string('a', 64), ["ManifestVersion"] = 1
+                };
+                var metadata = new JObject { ["DependsOn"] = new JArray(dependency) };
+                var changeset = BeginChangeset(application, hash);
+                RequireResult(application.Execute("changeset_apply", new JObject
+                {
+                    ["changesetId"] = changeset,
+                    ["operations"] = new JArray(new JObject
+                    {
+                        ["kind"] = "putResource", ["relativePath"] = "dependency.json",
+                        ["base64"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(metadata.ToString()))
+                    })
+                }));
+                var args = new JObject { ["changesetId"] = changeset };
+                Assert.That(RequireResult(application.Execute("changeset_validate", args)).Value<bool>("valid"), Is.True);
+                RequireResult(application.Execute("changeset_commit", args));
+                var after = RequireResult(application.Execute("modules_list", new JObject()))["modules"][0];
+                Assert.That(after.Value<string>("contentHash"), Is.Not.EqualTo(hash));
+                Assert.That(after.Value<string>("assetContentHash"), Is.EqualTo(pin), "Dependency metadata changes the transactional revision, not the published asset pin.");
+                Assert.That(JToken.DeepEquals(after["dependsOn"][0], dependency), Is.True);
+            }
+            finally
+            {
+                application?.Shutdown();
+                DeleteEnvironment(environment.Root);
+            }
+        }
+
+        [Test]
         public void WorkspaceLeaseRejectsSecondApplicationUntilShutdown()
         {
             var environment = CreateEnvironment();

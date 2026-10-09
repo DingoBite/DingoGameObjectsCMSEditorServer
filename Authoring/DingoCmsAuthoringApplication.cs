@@ -191,6 +191,8 @@ namespace DingoGameObjectsCMSEditorServer.Authoring
                         ["moduleId"] = moduleId,
                         ["valid"] = true,
                         ["contentHash"] = snapshot.ContentHash,
+                        ["assetContentHash"] = snapshot.AssetContentHash,
+                        ["dependsOn"] = JArray.FromObject(snapshot.DependsOn),
                         ["assetCount"] = snapshot.Assets.Count,
                         ["fileCount"] = snapshot.Files.Count,
                         ["manifestVersion"] = snapshot.ManifestVersion
